@@ -1,0 +1,61 @@
+name: Validate COC Structure
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate structure
+        run: |
+          echo "Checking COC structure..."
+          # Verify critical directories exist
+          test -d .claude/agents && echo "✓ agents/"
+          test -d .claude/skills && echo "✓ skills/"
+          test -d .claude/rules && echo "✓ rules/"
+          test -d .claude/commands && echo "✓ commands/"
+          test -f CLAUDE.md && echo "✓ CLAUDE.md"
+
+          # Check for contamination (builder paths should not be in template)
+          # Exclude py-variant skill files that legitimately reference SDK source
+          # paths (these guide developers working WITH the kailash-py source tree)
+          contamination=$(grep -r "src/kailash/" .claude/ 2>/dev/null \
+            --exclude="production-readiness-patterns.md" \
+            --exclude="async-resource-safety.md" \
+            --exclude="runtime-lifecycle.md" \
+            --exclude="otel-tracing.md" \
+            --exclude="release-checklist.md" \
+            --exclude="07-sync-flow.md" \
+            --exclude="release.md" \
+            --exclude="nodes-quick-index.md" \
+            --exclude="eatp-posture-stores.md" \
+            --exclude="pact-dtr-addressing.md" \
+            --exclude="pact-kaizen-integration.md" \
+            --exclude="pact-governed-agents.md" \
+            --exclude="pact-envelopes.md" \
+            --exclude="pact-access-enforcement.md" \
+            --exclude="pact-quickstart.md" \
+            --exclude="pact-governance-engine.md" \
+            --exclude="VERSION" \
+            || true)
+          if [ -n "$contamination" ]; then
+            echo "$contamination"
+            echo "ERROR: Found builder paths (src/kailash/) in template"
+            exit 1
+          fi
+          echo "✓ No contamination detected"
+
+          # Count agents and skills
+          echo "Agents: $(find .claude/agents -name '*.md' | wc -l)"
+          echo "Skills: $(find .claude/skills -name '*.md' | wc -l)"
+          echo "Rules: $(find .claude/rules -name '*.md' | wc -l)"
+          echo "Commands: $(find .claude/commands -name '*.md' | wc -l)"
+          echo "All checks passed!"

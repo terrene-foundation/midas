@@ -1,0 +1,387 @@
+{
+  "version": "3.2.0",
+  "type": "coc-use-template",
+  "description": "COC USE template for Python SDK projects",
+  "released": "2026-04-08",
+  "upstream": {
+    "name": "kailash",
+    "type": "coc-source",
+    "version": "2.8.0",
+    "build_version": "2.8.0",
+    "synced_at": "2026-04-09T02:30:00+08:00"
+  },
+  "changelog": [
+    {
+      "version": "3.2.0",
+      "date": "2026-04-08",
+      "summary": "Sync loom 2.7.0 — Framework mandate enforcement wave. New rules: observability.md (mandatory structured log points), schema-migration.md (numbered migrations). Extended: zero-tolerance.md Rule 1 (compiler/linter/deprecation warnings), framework-first.md (work-domain binding table), dependencies.md (declared=imported). New hooks: integration-hygiene.js (PostToolUse), log-triage-gate.js (Stop). 8 framework agent descriptions rewritten (failure-mode triggers). 8 SKILL.md descriptions rewritten (MANDATORY domain headers). Updated: reviewer.md (integration hygiene checklist), testing-specialist.md (log assertion requirement), implement.md (integration hygiene step), redteam.md (log triage gate).",
+      "changes": [
+        "NEW: rules/observability.md — mandatory structured log points at endpoints, integration points, data calls, state transitions",
+        "NEW: rules/schema-migration.md — all schema changes via numbered migrations, reversible down() required",
+        "EXTENDED: rules/zero-tolerance.md Rule 1 — scope now includes compiler/linter/deprecation/runtime/peer-dep warnings",
+        "EXTENDED: rules/framework-first.md — work-domain-to-framework binding mandate table, specialist consultation gate",
+        "EXTENDED: rules/dependencies.md — declared=imported section, ModuleNotFoundError same class as pre-existing failures",
+        "EXTENDED: rules/dataflow-pool.md Rule 2 — reachability check (SELECT 1 health check)",
+        "EXTENDED: rules/connection-pool.md — scope note for DataFlow consumers",
+        "EXTENDED: rules/infrastructure-sql.md — scope note for DataFlow consumers",
+        "NEW: scripts/hooks/integration-hygiene.js — PostToolUse detector for raw SQL, mock data, silent swallows",
+        "NEW: scripts/hooks/log-triage-gate.js — Stop hook scanning recent logs for WARN/ERROR/FAIL",
+        "UPDATED: settings.json — registered integration-hygiene.js and log-triage-gate.js",
+        "DESCRIPTION REWRITE: 8 framework agents (dataflow, nexus, kaizen, mcp, mcp-platform, pact, ml, align) — failure-mode triggers + BLOCKED clauses",
+        "DESCRIPTION REWRITE: 8 SKILL.md files (01-core-sdk through 35-kailash-align) — MANDATORY domain headers",
+        "UPDATED: agents/quality/reviewer.md — integration hygiene checklist",
+        "UPDATED: agents/testing/testing-specialist.md — log assertion requirement for Tiers 2-3",
+        "UPDATED: commands/implement.md — Step 8 integration hygiene checklist",
+        "UPDATED: commands/redteam.md — Step 7 log triage gate",
+        "ADAPTED: rules/agents.md — worktree section stripped (PY users do not compile Rust)",
+        "ADAPTED: rules/zero-tolerance.md Rule 4 — USE context (file GitHub issues, not fix SDK source)"
+      ]
+    },
+    {
+      "version": "3.1.3",
+      "date": "2026-04-08",
+      "summary": "Sync loom 2.6.2 — /redteam spec compliance + /deploy hygiene + Rust leak fix. New: skills/spec-compliance/SKILL.md (9-check verification protocol, Python-only); rules/deploy-hygiene.md (6-level failure model, infrastructure-only paths); skills/10-deployment-git/application-deployment.md (Vite/Docker/Next.js patterns). Rewritten: commands/deploy.md (3 modes, 10-step checklist), commands/redteam.md (semantic verification, language-agnostic), commands/wrapup.md (4-state deploy classification). Updated: rules/testing.md (audit-mode rules, Python-only), agents/analysis/analyst.md and agents/testing/testing-specialist.md (/redteam ownership).",
+      "changes": [
+        "NEW: skills/spec-compliance/SKILL.md — 9-check verification protocol (class signatures, fields, decorators, MOVE shims, new test coverage, security tests, import migration, fake-implementation patterns, self-report trust ban). Python-only examples (ast.parse, pytest --collect-only).",
+        "REWRITE: commands/redteam.md — Step 1 references spec-compliance skill; Step 4 forbids trusting .test-results; convergence requires AST/grep verified spec coverage with literal commands.",
+        "UPDATE: rules/testing.md — added § Audit Mode Rules (re-derive coverage, verify new modules have new tests, verify security mitigation tests). Path frontmatter expanded.",
+        "UPDATE: agents/analysis/analyst.md and testing/testing-specialist.md — explicit /redteam Step 1 and Step 4 ownership pointing to spec-compliance skill.",
+        "REWRITE: commands/deploy.md — was a 9-line redirect stub; now config-driven onboard/execute/check modes with 10-step DEPLOY CHECKLIST printed into the response.",
+        "NEW: rules/deploy-hygiene.md — 6-level failure model (committed/traffic/cache/build-bypass/Dockerfile-COPY/never-deployed). Path-scoped to infrastructure files only (Dockerfile, deploy/**, k8s/**, vercel.json, etc.), not source code.",
+        "NEW: skills/10-deployment-git/application-deployment.md — deployment-config.md schema, Frontend Deployment Patterns (Vite static, Vite+Docker, Next.js standalone/export/Vercel), bundle hash extraction reference table, Three Dockerfile COPY traps.",
+        "UPDATE: commands/wrapup.md — Deploy State Check now uses 4-state classification (type:application / type:sdk / legacy prose / missing). Handles SDK BUILD repos and legacy configs cleanly.",
+        "MANIFEST: build_exclude added to sync-manifest.yaml — deploy artifacts (deploy.md, deploy-hygiene.md, application-deployment.md) are USE-template-only, never synced to BUILD repos.",
+        "LANGUAGE MAPPING: sync-manifest.yaml header documents USE template language constraints (py→Python, rs→Python/Ruby binding consumers, rb→Ruby). Rust content belongs only to kailash-rs BUILD locally."
+      ]
+    },
+    {
+      "version": "3.1.2",
+      "date": "2026-04-08",
+      "summary": "REVERT 3.1.1: restore `paths:` frontmatter on 8 rule files. Previous diagnosis was wrong — Claude Code path-scoped rules load ONCE on first matching read and stay sticky, NOT per tool call. Stripping `paths:` moved rules into the always-on baseline (~5500 tokens per stripped large rule), increasing session cost. Verified empirically via subprocess tests + Claude Code official docs (`code.claude.com/docs/en/memory`: 'Path-scoped rules trigger when Claude reads files matching the pattern, not on every tool use').",
+      "changes": [
+        "RESTORED: rules/agent-reasoning.md — paths: **/kaizen/**, **/*agent*, **/agents/**",
+        "RESTORED: rules/artifact-flow.md — paths: .claude/**, sync-manifest.yaml, **/VERSION, *.md",
+        "RESTORED: rules/env-models.md — paths: **/*.py, **/*.ts, **/*.js, .env*",
+        "RESTORED: rules/framework-first.md — paths: **/*.py, **/*.rs",
+        "RESTORED: rules/patterns.md — paths: **/*.py, **/*.ts, **/*.js",
+        "RESTORED: rules/python-environment.md — paths: **/*.py, pyproject.toml, conftest.py, tests/**",
+        "RESTORED: rules/terrene-naming.md — paths: **/*.md, **/README*, **/LICENSE*, **/CLAUDE.md",
+        "RESTORED: rules/testing.md — paths: tests/**, **/*test*, **/*spec*, conftest.py",
+        "NOTE: Wide patterns are restored as-is (per user direction). Narrowing is a separate refinement task — wide is not a problem because rules inject once per session, not per call."
+      ]
+    },
+    {
+      "version": "3.1.1",
+      "date": "2026-04-08",
+      "summary": "[REVERTED in 3.1.2] fix(rules): strip broad path matchers — based on incorrect diagnosis. See 3.1.2 for evidence and revert.",
+      "changes": [
+        "UPDATED: rules/patterns.md, env-models.md, framework-first.md, python-environment.md, terrene-naming.md, artifact-flow.md, agent-reasoning.md, testing.md — removed broad `paths:` frontmatter",
+        "UPDATED: scripts/hooks/session-start.js — session notes inject as pointer lines only (was dumping ~12KB per session)",
+        "UPDATED: scripts/hooks/user-prompt-rules-reminder.js — removed redundant zero-tolerance block and keyword-triggered reminders (already covered by always-on rules)",
+        "IMPACT: eliminates per-tool-call rule re-injection that was pushing sessions to 200-300K tokens within dozens of file reads"
+      ]
+    },
+    {
+      "version": "3.1.0",
+      "date": "2026-04-07",
+      "summary": "L5 learning system redesign — digest-based pipeline replaces instinct/evolve/checkpoint",
+      "changes": [
+        "DELETED: scripts/learning/instinct-processor.js, instinct-evolver.js, checkpoint-manager.js",
+        "DELETED: scripts/hooks/lib/instinct-renderer.js",
+        "DELETED: .claude/rules/learned-instincts.md (no more auto-injected rules)",
+        "DELETED: .claude/commands/evolve.md, checkpoint.md",
+        "NEW: scripts/learning/digest-builder.js (pure aggregation → learning-digest.json)",
+        "UPDATED: scripts/hooks/session-end.js — calls digest-builder, logs accomplishments + decisions",
+        "UPDATED: scripts/hooks/user-prompt-rules-reminder.js — detects user corrections",
+        "UPDATED: scripts/hooks/validate-workflow.js — rule_violation type with specific rule names",
+        "UPDATED: scripts/hooks/validate-bash-command.js — error_occurrence → rule_violation",
+        "UPDATED: scripts/hooks/stop.js — removed stop observation noise",
+        "UPDATED: scripts/hooks/lib/learning-utils.js — simplified ensureLearningDir",
+        "UPDATED: scripts/learning/observation-logger.js — new observation types",
+        "UPDATED: scripts/plugin/post-install.js, pre-uninstall.js — digest-aware",
+        "UPDATED: .claude/commands/codify.md — step 1 reads learning-digest.json + journals + session notes",
+        "UPDATED: .claude/commands/learn.md — shows digest summary instead of instinct stats",
+        "UPDATED: 13 guides — removed all instinct/evolve/checkpoint references"
+      ]
+    },
+    {
+      "version": "3.0.0",
+      "date": "2026-04-07",
+      "summary": "Nexus skills restructured (23 global language-neutral + 20 py variants), ML SKILL.md + ml-specialist updated, agents.md worktree section stripped, BUILD path leaks fixed",
+      "changes": [
+        "UPDATED: skills/03-nexus/ — 23 global files language-neutral, 20 py variant overlays applied",
+        "UPDATED: skills/34-kailash-ml/SKILL.md — ModelExplainer, preprocessing, calibration, nested runs, auto-logging",
+        "UPDATED: agents/frameworks/ml-specialist.md — py variant with ModelExplainer, ExperimentTracker patterns",
+        "UPDATED: agents/frameworks/nexus-specialist.md — py variant with transport/security patterns",
+        "UPDATED: skills/29-pact/pact-governance-engine.md — py variant, BUILD paths converted to module refs",
+        "UPDATED: skills/02-dataflow/dataflow-ml-integration.md — BUILD paths converted to module refs",
+        "UPDATED: skills/project/ml-quick-reference.md — BUILD paths converted to module refs",
+        "ADAPTED: rules/agents.md — Rust worktree isolation section stripped (Python-irrelevant)",
+        "ADAPTED: rules/zero-tolerance.md — USE softening preserved (scope, Rule 4 GitHub issues)",
+        "UPDATED: scripts/hooks/lib/version-utils.js — upstream sync"
+      ]
+    },
+    {
+      "version": "2.9.0",
+      "date": "2026-04-07",
+      "summary": "ML PreprocessingPipeline cardinality guard, ModelVisualizer EDA, ExperimentTracker factory; Kaizen multi-agent top-level exports, coordination removal",
+      "changes": [
+        "UPDATED: agents/frameworks/ml-specialist.md — PreprocessingPipeline cardinality guard, ModelVisualizer EDA methods, ExperimentTracker.create() factory",
+        "UPDATED: agents/frameworks/kaizen-specialist.md — multi-agent pattern top-level exports from kaizen_agents, agents/coordination removal deprecation",
+        "SDK PINS: kailash-ml 0.5.0→0.6.0, kaizen-agents 0.6.0→0.7.0 (new release: ml-v0.6.0, kaizen-agents-v0.7.0)"
+      ]
+    },
+    {
+      "version": "2.8.0",
+      "date": "2026-04-06",
+      "summary": "PACT clearance lifecycle FSM — SUSPENDED state, transition_clearance(), reinstatement path",
+      "changes": [
+        "UPDATED: agents/frameworks/pact-specialist.md — clearance lifecycle FSM (SUSPENDED, transition_clearance, reinstatement)",
+        "UPDATED: skills/29-pact/pact-governance-engine.md — VettingStatus FSM diagram, transition_clearance() API"
+      ]
+    },
+    {
+      "version": "2.7.1",
+      "date": "2026-04-06",
+      "summary": "Gate 2: align Kaizen agents + on-prem section, ML correlation robustness — from loom v2.3.0",
+      "changes": [
+        "UPDATED: agents/frameworks/align-specialist.md — 4 Kaizen agents (BaseAgent+Signature), OnPrem config plumbing",
+        "UPDATED: agents/frameworks/ml-specialist.md — DataExplorer pairwise-complete correlation, _sanitize_float()"
+      ]
+    },
+    {
+      "version": "2.6.0",
+      "date": "2026-04-05",
+      "summary": "Skill tightening long tail: 14 files updated (6 global + 8 py variant), 2 stale variant entries removed",
+      "changes": [
+        "TIGHTENED: 6 global skill files (async-pythoncode, dataflow-debug, nexus-workflow-reg, kaizen-agent-registry, kaizen-observability, production-testing)",
+        "TIGHTENED: 8 py variant skill files (codegen-decision-tree, golden-patterns, SKILL.md, UNIFIED_AGENT x2, kaizen-config, kaizen-structured, kaizen-tool-calling)",
+        "DELETED VARIANT: async-pythoncode-patterns.md — now uses global directly (variant was identical)",
+        "DELETED VARIANT: nexus-workflow-registration.md — now uses global directly (variant was identical)",
+        "CLEANED: sync-manifest.yaml — 2 stale variant entries removed for deleted files"
+      ]
+    },
+    {
+      "version": "2.5.0",
+      "date": "2026-04-05",
+      "summary": "Skill tightening: 28 global skills compressed 78%, 7 files with restored patterns",
+      "changes": [
+        "TIGHTENED: 18 global skill files (dataflow, nexus, kaizen, deployment, frontend, design, AI interaction)",
+        "RESTORED: 7 files with missing patterns added back during tightening",
+        "UNCHANGED: 10 py variant files already current"
+      ]
+    },
+    {
+      "version": "2.4.0",
+      "date": "2026-04-05",
+      "summary": "DataExplorer P1: async profiling, alerts, HTML reports, ydata-profiling parity",
+      "changes": [
+        "UPDATED: agents/frameworks/ml-specialist.md — DataExplorer promoted P2→P1, async API, alerts, HTML reports, NaN/Inf + XSS security"
+      ]
+    },
+    {
+      "version": "2.3.0",
+      "date": "2026-04-05",
+      "summary": "Framework specialist descriptions — package-name-first for reliable routing",
+      "changes": [
+        "UPDATED: 8 framework specialist agent descriptions — lead with kailash-{package}, dense keyword triggers",
+        "Agents: ml, align, dataflow, nexus, kaizen, mcp, pact, infrastructure specialists"
+      ]
+    },
+    {
+      "version": "2.2.0",
+      "date": "2026-04-05",
+      "summary": "v2.5.1 codify: SSRF prevention, Nexus transports, ML protocol consolidation, SDK pin bump",
+      "changes": [
+        "UPDATED: skills/18-security-patterns/SKILL.md — SSRF prevention (DNS-pinned delivery, IPv4-mapped IPv6) + Error Message Security",
+        "UPDATED: skills/02-dataflow/dataflow-ml-integration.md — kailash_ml_protocols->kailash_ml.types import fix, BUILD paths stripped",
+        "UPDATED: agents/frameworks/nexus-specialist.md — Transport Layer section (4 transports, ResponseCache, security patterns)",
+        "UPDATED: agents/frameworks/ml-specialist.md — kailash_ml.types import paths",
+        "NEW: skills/04-kaizen/kaizen-ml-integration.md — ML+Kaizen integration patterns (9 engines, type contracts, AutoML guardrails)",
+        "UPDATED: pyproject.toml — SDK pins: kailash 2.4.0->2.5.1, nexus 1.7.1->1.9.0, dataflow 1.5.1->1.7.1, kaizen 2.3.3->2.5.0, pact 0.5.0->0.7.1"
+      ]
+    },
+    {
+      "version": "2.1.0",
+      "date": "2026-04-05",
+      "summary": "TSG specialists + stale agent cleanup + dependency rules + VERSION alignment",
+      "changes": [
+        "NEW: 3 specialist agents (mcp-platform, ml, align) from loom v1.6.0",
+        "NEW: skills/34-kailash-ml/ (8 ML lifecycle skills)",
+        "NEW: skills/35-kailash-align/ (5 LLM alignment skills)",
+        "NEW: 7 MCP platform skills in skills/05-kailash-mcp/",
+        "UPDATED: rules/agents.md — delegation table expanded to 8 specialists",
+        "UPDATED: commands/wrapup.md — red team verification with inline evidence",
+        "FIXED: cc-audit fixes — delegation routing, SKILL.md descriptions, BUILD path contamination"
+      ]
+    },
+    {
+      "version": "2.0.0",
+      "date": "2026-04-04",
+      "summary": "v2.5.0 codify: Kaizen provider config (structured outputs, Azure canonical env vars) + FastAPI sweep",
+      "changes": [
+        "NEW: skills/31-error-troubleshooting/error-kaizen-provider-config.md (Azure 400, response_format.type, provider_config deprecation, env var migration)",
+        "UPDATED: skills/04-kaizen/SKILL.md — v2.5.0 Provider Configuration section, config-patterns + structured-outputs links, 2 new critical rules",
+        "UPDATED: skills/31-error-troubleshooting/SKILL.md — Kaizen Provider Errors section, 3 new quick reference rows, 3 new checklist items",
+        "UPDATED: skills/04-kaizen/kaizen-structured-outputs.md — v2.5.0 explicit mode, response_format field, migration from auto",
+        "UPDATED: skills/04-kaizen/kaizen-config-patterns.md — response_format vs provider_config, Azure canonical env vars, Docker Model Runner",
+        "UPDATED: agents/frameworks/kaizen-specialist.md — Explicit Over Implicit section, 4 new Never rules, Azure env var table",
+        "UPDATED: 43 files from FastAPI sweep (Docker/FastAPI -> Docker/async, Nexus async patterns, runtime references)",
+        "ADAPTED: 2 rules preserved USE softening (agents.md RECOMMENDED gates, zero-tolerance.md GitHub issues for SDK bugs)"
+      ]
+    },
+    {
+      "version": "1.9.0",
+      "date": "2026-04-04",
+      "summary": "v1.5.0 source sync: 13 new dataflow/nexus skills, agent updates, framework-first refreshed",
+      "changes": [
+        "NEW: 8 dataflow skills (derived-models, events, express-cache, file-import, ml-integration, read-replicas, retention, validation-dsl)",
+        "NEW: 2 nexus skills (eventbus-phase2, transport-architecture)",
+        "NEW: 3 project skills (dataflow-provenance-audit, fabric-cache-consumers, pact-enforcement-modes)",
+        "UPDATED: 5 agents (mcp-specialist, nexus-specialist, flutter-specialist, gh-manager, testing-specialist)",
+        "UPDATED: 14 rules (agents, cc-artifacts, dataflow-pool, framework-first, infrastructure-sql, pact-governance, patterns, testing, zero-tolerance + 5 more)",
+        "UPDATED: 28 skills across core-sdk, nexus, kaizen, cheatsheets, dev-guides, frontend, testing, architecture, templates, validation, gold-standards, pact, claude-code",
+        "ADAPTED: 2 rules preserved USE softening (agents.md RECOMMENDED gates, zero-tolerance.md GitHub issues for SDK bugs)"
+      ]
+    },
+    {
+      "version": "1.8.0",
+      "date": "2026-04-04",
+      "summary": "Rule Why: rationale + security hardening + cross-ref cleanup + sync enforcement",
+      "changes": [
+        "UPDATED: All 27 global rules — added **Why:** rationale lines (153 lines total, USE-adapted where applicable)",
+        "UPDATED: 46 global skill files — hardcoded model names replaced with os.environ['LLM_MODEL']",
+        "UPDATED: 95 py variant skill sub-files — Python-specific API corrections (phantom nodes, import paths, Nexus/Kaizen/PACT/EATP fixes)",
+        "UPDATED: 6 py variant SKILL.md indexes (03-nexus, 05-mcp, 08-nodes, 13-architecture, 18-security, 29-pact)",
+        "FIXED: session-start.js — shell injection in checkSdkPinFreshness() (execSync->execFileSync)",
+        "FIXED: version-utils.js — command injection in fetchUpstreamVersion() (execSync->execFileSync)",
+        "FIXED: NaN bypass on COC sync marker timestamp — added isFinite check",
+        "FIXED: 9 broken dataflow-specialist.md file path links in skill sub-files",
+        "CLEANED: 8 workspaces/ provenance refs in global skills",
+        "ADAPTED: 4 rules preserved USE softening (agents.md, testing.md, zero-tolerance.md, git.md) with new Why: rationale merged",
+        "UPDATED: /sync command with mandatory step 10 (uv sync) and step 11 (verify hooks)"
+      ]
+    },
+    {
+      "version": "1.7.0",
+      "date": "2026-04-04",
+      "summary": "Red team fixes: phantom nodes, cross-refs, PACT variant, testing dir names",
+      "changes": [
+        "GLOBAL: 22 sub-skill phantom node fixes (APICallNode->HTTPRequestNode, etc.)",
+        "GLOBAL: 10 broken ../nodes/ cross-refs fixed (->../08-nodes-reference/)",
+        "GLOBAL: Hardcoded gpt-4->os.environ['LLM_MODEL'] in cheatsheets, workflow-patterns",
+        "VARIANT-PY: Nexus SKILL.md rewrite (register/start pattern)",
+        "VARIANT-PY: MCP SKILL.md @server.tool() fix",
+        "VARIANT-PY: New 29-pact/SKILL.md (kailash.trust.pact import paths)",
+        "GLOBAL: testing-strategies test dir names (tier1_unit->unit)",
+        "FIX: CI validate workflow excludes legitimate src/kailash/ refs"
+      ]
+    },
+    {
+      "version": "1.6.0",
+      "date": "2026-04-04",
+      "summary": "Agent/skill ontology v1.4.0 sync: consolidated agents, co-reference skills, obsolete cleanup",
+      "changes": [
+        "CONSOLIDATED: 33->26 agents (analyst, reviewer, release-specialist absorb deep-analyst, requirements-analyst, intermediate-reviewer, deployment-specialist, git-release-specialist, documentation-validator, e2e-runner)",
+        "MIGRATED: care/co/coc/eatp-expert agents -> skills/co-reference/ (6 new spec files)",
+        "DELETED: agents/standards/ directory (4 expert agents), agents/frontend/ai-ux-designer.md, agents/frontend/frontend-developer.md",
+        "DELETED: rules/branch-protection.md (merged into git.md), rules/no-stubs.md (merged into zero-tolerance.md)",
+        "DELETED: skills/27-care-reference/ (content migrated to skills/co-reference/care-spec.md)",
+        "NEW: skills/co-reference/ — 6 spec files (CARE, EATP, CO, COC, governance-layer-thesis, behavioral-guidelines)",
+        "TIGHTENED: All 19 agents avg 266->77 lines (71% reduction)",
+        "TIGHTENED: 12 SKILL.md files avg 280->180 lines (35% reduction)",
+        "ADAPTED: zero-tolerance.md Rule 4 for USE context (report SDK bugs via GitHub issues)",
+        "ADAPTED: agents.md quality gates softened to RECOMMENDED",
+        "UPDATED: 124 files with v1.4.0 content (agent tightening, skill compression, stale ref cleanup)"
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "date": "2026-04-03",
+      "summary": "Token optimization sync: 90% rule reduction, agent restructure, py variant rules removed (globals apply directly)",
+      "changes": [
+        "TIGHTENED: All 28 rules compressed (enforcement sections, cross-refs, motivational text removed)",
+        "MERGED: no-stubs.md content into zero-tolerance.md Rule 2 (no-stubs.md preserved as template-only)",
+        "MERGED: branch-protection.md content into git.md (branch-protection.md preserved as template-only)",
+        "SCOPED: 19 rules now path-scoped (only load when editing matching files)",
+        "RESTRUCTURED: 13 agents moved to subdirectories (analysis, frameworks, frontend, implementation, management, quality, release, testing)",
+        "DELETED: sdk-navigator.md, framework-advisor.md (merged into skills/13-architecture-decisions/decide-framework.md)",
+        "REMOVED: 12 py variant rules (globals now apply directly with USE-context adaptations)",
+        "UPDATED: rules/framework-first.md — 4-layer hierarchy (Specs, Primitives, Engines, Entrypoints)",
+        "UPDATED: skills/13-architecture-decisions/decide-framework.md — rewritten with 4-layer hierarchy + migration paths",
+        "UPDATED: rules/agents.md — gate-level review (not per-edit), quality gates tied to COC phases",
+        "UPDATED: skills/02-dataflow/SKILL.md — Data Fabric Engine (3 new py variant files from Gate 1)",
+        "UPDATED: skills/10-deployment-git/deployment-ci.md — CI efficiency patterns",
+        "ADAPTED: zero-tolerance.md Rule 4 rewritten for USE context (report via GitHub issues, not fix SDK source)"
+      ]
+    },
+    {
+      "version": "1.4.0",
+      "date": "2026-04-01",
+      "summary": "Downstream proposal guard + SDK pin update to 2.4.0",
+      "changes": [
+        "UPDATED: commands/codify.md — Step 7 scoped to BUILD repos only; downstream repos skip proposals",
+        "UPDATED: rules/artifact-flow.md — New Rule 2a: downstream repos do not propose upstream",
+        "UPDATED: pyproject.toml — SDK pins: kailash 2.3.1->2.4.0, nexus 1.6.0->1.7.1, dataflow 1.3.0->1.5.1, kaizen 2.3.2->2.3.3"
+      ]
+    },
+    {
+      "version": "1.3.0",
+      "date": "2026-04-01",
+      "summary": "Dependency install normalization + Python venv enforcement rule",
+      "changes": [
+        "UPDATED: rules/infrastructure-sql.md (py variant) — pip install kailash[postgres] -> pip install kailash",
+        "UPDATED: skills/01-core-sdk/kailash-installation.md — all kailash[extras] -> pip install kailash",
+        "UPDATED: skills/04-kaizen/kaizen-trust-eatp.md — kailash[trust] -> pip install kailash",
+        "UPDATED: skills/15-enterprise-infrastructure/connection-manager-patterns.md — extras refs -> pip install kailash",
+        "UPDATED: skills/15-enterprise-infrastructure/progressive-infrastructure.md — kailash[postgres] -> pip install kailash",
+        "UPDATED: skills/26-eatp-reference/SKILL.md — kailash[trust] -> pip install kailash",
+        "UPDATED: skills/26-eatp-reference/eatp-sdk-api-reference.md — kailash[trust] -> pip install kailash",
+        "UPDATED: skills/26-eatp-reference/eatp-sdk-quickstart.md — kailash[trust] -> pip install kailash",
+        "NEW: rules/python-environment.md — Python venv isolation policy (uv + .venv enforcement)",
+        "UPDATED: scripts/hooks/session-start.js — Added Python venv check"
+      ]
+    },
+    {
+      "version": "1.2.0",
+      "date": "2026-03-31",
+      "summary": "Gate 1 py changes: DataFlow SyncExpress, PACT approve_bridge, __del__ patterns, Nexus K8s probes, Kaizen agent reference",
+      "changes": [
+        "UPDATED: skills/02-dataflow/dataflow-express.md (py variant) — SyncExpress API, SQLite timestamp fix",
+        "UPDATED: skills/29-pact/pact-governance-engine.md — approve_bridge pattern",
+        "UPDATED: rules/patterns.md (py variant) — __del__ cleanup patterns",
+        "UPDATED: skills/03-nexus/nexus-k8s-probes.md — K8s health probe patterns",
+        "UPDATED: skills/04-kaizen/kaizen-tool-hydration.md (variant-only) — tool hydration refinements",
+        "UPDATED: agents/standards/co-expert.md — CO expert updates",
+        "UPDATED: agents/standards/coc-expert.md — COC expert updates",
+        "UPDATED: rules/journal.md — journal rule refinements",
+        "UPDATED: skills/co-reference/SKILL.md — CO reference updates"
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-03-30",
+      "summary": "Engine-first framework rule, layer preference tables, Delegate-vs-BaseAgent skill",
+      "changes": [
+        "NEW: rules/framework-first.md — Engine-over-Primitives 3-layer model",
+        "NEW: skills/04-kaizen/kaizen-delegate-vs-baseagent.md — Delegate vs BaseAgent decision guide",
+        "UPDATED: agents/framework-advisor.md — added Step 2b layer selection table",
+        "UPDATED: agents/frameworks/dataflow-specialist.md — added layer preference section",
+        "UPDATED: agents/frameworks/nexus-specialist.md — added layer preference section",
+        "UPDATED: skills/13-architecture-decisions/decide-framework.md — added within-framework layer selection"
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-03-29",
+      "summary": "Initial versioned release with variant architecture",
+      "changes": [
+        "Downstream merge /sync command",
+        "Proposal-based /codify flow",
+        "artifact-flow.md rule",
+        "Project-level /cc-audit command",
+        "Version tracking with upstream check"
+      ]
+    }
+  ]
+}
