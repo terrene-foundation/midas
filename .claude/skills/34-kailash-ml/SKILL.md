@@ -1,37 +1,48 @@
 ---
 name: kailash-ml
-description: "Kailash ML — MANDATORY for ALL ML training/inference/feature work. Polars-native, AutoML, ONNX serving, drift monitoring, model registry. Use proactively when work touches feature stores, training pipelines, inference servers, drift detection, ensembles, or 'just a quick sklearn pipeline'. Raw sklearn, pytorch, numpy, pandas training loops BLOCKED."
+description: "Kailash ML — MANDATORY for ALL ML training/inference/feature work. 13 engines (FeatureStore, ModelRegistry, TrainingPipeline, DriftMonitor, AutoML, HyperparameterSearch, Ensemble, etc.), polars-native, ONNX serving, agent-augmented search. Use proactively when work touches feature stores, training pipelines, inference servers, drift detection, ensembles, or 'just a quick sklearn pipeline'. Raw sklearn, pytorch, numpy, pandas training loops BLOCKED."
 ---
 
-# Kailash ML - Classical & Deep Learning Lifecycle
+# Kailash ML — Classical & Deep Learning Lifecycle
 
 Production ML lifecycle framework built on Kailash Core SDK — polars-native engines, schema-driven pipelines, agent-augmented AutoML, and cross-language ONNX serving.
 
-## Install
+## Install Matrix
 
 ```
-pip install kailash-ml            # Core (polars, numpy, scipy, sklearn, lightgbm, onnx)
-pip install kailash-ml[dl]        # + PyTorch, Lightning, transformers
+pip install kailash-ml            # Core: polars, numpy, scipy, sklearn, lightgbm, plotly, onnx
+pip install kailash-ml[dl]        # + PyTorch, Lightning, transformers, timm
 pip install kailash-ml[dl-gpu]    # + onnxruntime-gpu
 pip install kailash-ml[rl]        # + Stable-Baselines3, Gymnasium
 pip install kailash-ml[agents]    # + kailash-kaizen (agent integration)
 pip install kailash-ml[xgb]       # + XGBoost
 pip install kailash-ml[catboost]  # + CatBoost
-pip install kailash-ml[explain]    # + SHAP (model explainability)
-pip install kailash-ml[imbalance]  # + imbalanced-learn (SMOTE, ADASYN)
-pip install kailash-ml[full]      # Everything
+pip install kailash-ml[explain]   # + SHAP (model explainability)
+pip install kailash-ml[imbalance] # + imbalanced-learn (SMOTE, ADASYN)
+pip install kailash-ml[stats]     # + statsmodels
+pip install kailash-ml[full]      # Everything (CPU)
+pip install kailash-ml[all-gpu]   # Everything (GPU)
 ```
 
-## 6 Core Engines
+## 13 Engines (by Priority)
 
-| Engine               | Purpose                                   | Key Pattern                                     |
-| -------------------- | ----------------------------------------- | ----------------------------------------------- |
-| **FeatureStore**     | Feature ingestion + point-in-time queries | ConnectionManager-backed, polars-native         |
-| **ModelRegistry**    | Model versioning + lifecycle              | staging → shadow → production → archived        |
-| **TrainingPipeline** | Schema-driven training + eval + calibrate | FeatureStore + ModelRegistry integration        |
-| **InferenceServer**  | Model serving + batch inference           | Nexus HTTP exposure, ONNX runtime, caching      |
-| **DriftMonitor**     | Statistical drift detection               | KS, chi-squared, PSI, Jensen-Shannon divergence |
-| **ModelExplainer**   | SHAP-based model explainability           | Global/local/dependence explanations, plotly    |
+| #   | Engine                | Priority | Purpose                                                            | Key Dependency                     |
+| --- | --------------------- | -------- | ------------------------------------------------------------------ | ---------------------------------- |
+| 1   | FeatureStore          | P0       | Polars-native feature versioning, point-in-time queries            | ConnectionManager                  |
+| 2   | ModelRegistry         | P0       | Model versioning (staging/shadow/production/archived), ONNX export | ConnectionManager, ArtifactStore   |
+| 3   | TrainingPipeline      | P0       | sklearn/LightGBM/Lightning training with FeatureSchema             | FeatureStore, ModelRegistry        |
+| 4   | InferenceServer       | P0       | REST serving via kailash-nexus, response caching, batch            | ModelRegistry, kailash-nexus       |
+| 5   | DriftMonitor          | P0       | KS/chi2/PSI/Jensen-Shannon drift detection, scheduled checks       | ConnectionManager                  |
+| 6   | ExperimentTracker     | P0       | MLflow-compatible run tracking, metric comparison, audit           | ConnectionManager                  |
+| 7   | HyperparameterSearch  | P1       | Grid/random/Bayesian/successive halving optimization               | TrainingPipeline                   |
+| 8   | AutoMLEngine          | P1       | Multi-family model search, optional agent augmentation             | HyperparameterSearch, FeatureStore |
+| 9   | EnsembleEngine        | P1       | Blend/stack/bag/boost ensemble creation                            | TrainingPipeline                   |
+| 10  | PreprocessingPipeline | P1       | Auto-setup from FeatureSchema, imputation, encoding                | FeatureSchema                      |
+| 11  | DataExplorer          | P2       | Statistical profiling, plotly visualization, comparison            | polars, plotly                     |
+| 12  | FeatureEngineer       | P2       | Auto-generation, selection, importance ranking                     | polars                             |
+| 13  | ModelExplainer        | P2       | SHAP-based global/local/dependence explanations                    | SHAP (requires [explain])          |
+
+**Additional modules**: OnnxBridge, MlflowFormatReader/Writer, MLDashboard (all lazy-loaded).
 
 ## Quick Start
 
@@ -60,6 +71,9 @@ await fs.initialize()
 
 df = pl.read_csv("data.csv")
 await fs.ingest("user_features", schema, df)
+
+# Point-in-time retrieval
+features = await fs.get_features("user_features", entity_ids=["u1", "u2"])
 ```
 
 ### Training
@@ -86,7 +100,7 @@ from kailash_ml import DriftMonitor
 
 monitor = DriftMonitor(conn)
 await monitor.initialize()
-await monitor.set_reference("model_v1", reference_df)
+await monitor.set_reference_data("model_v1", reference_df)
 report = await monitor.check_drift("model_v1", current_df)
 # report.overall_drift, report.feature_results, report.recommendations
 ```
@@ -98,10 +112,40 @@ from kailash_ml import ModelExplainer
 
 explainer = ModelExplainer(model=fitted_model, X=train_df, feature_names=schema.feature_names)
 global_report = explainer.explain_global(max_display=10)
-# global_report["feature_importance"]: sorted feature → mean |SHAP| dict
 local_report = explainer.explain_local(X=test_df, index=0)
-# local_report["feature_contributions"]: per-feature SHAP for one prediction
 fig = explainer.to_plotly("summary")  # "summary", "beeswarm", "dependence"
+```
+
+### AutoML with Agent Augmentation
+
+```python
+from kailash_ml import AutoMLEngine
+from kailash_ml.engines.automl_engine import AutoMLConfig
+
+config = AutoMLConfig(
+    task_type="classification",
+    metric_to_optimize="f1",
+    search_strategy="bayesian",
+    search_n_trials=50,
+    agent=True,            # LLM augmentation (requires kailash-ml[agents])
+    auto_approve=False,    # Human approval gate
+    max_llm_cost_usd=5.0,
+)
+engine = AutoMLEngine(feature_store=fs, model_registry=registry, config=config)
+result = await engine.run(schema=schema, data=df)
+```
+
+### Model Registry Lifecycle
+
+```python
+# Stage transitions: staging → shadow → production → archived
+await registry.promote("model_v1", version_id, target_stage="production")
+
+# Valid transitions:
+# staging    → shadow, production, archived
+# shadow     → production, archived, staging
+# production → archived, shadow
+# archived   → staging
 ```
 
 ### Preprocessing Pipeline
@@ -113,22 +157,10 @@ pipeline = PreprocessingPipeline()
 result = pipeline.setup(
     data=df, target="churned",
     normalize=True, normalize_method="zscore",       # zscore, minmax, robust, maxabs
-    imputation="knn", impute_n_neighbors=5,           # knn, iterative, or default (median/mode)
+    imputation="knn", impute_n_neighbors=5,           # knn, iterative, default
     remove_multicollinearity=True, multicollinearity_threshold=0.9,
-    fix_imbalance=True, imbalance_method="smote",     # smote, adasyn (requires [imbalance])
+    fix_imbalance=True, imbalance_method="smote",     # smote, adasyn ([imbalance])
 )
-# result.X_train, result.X_test, result.y_train, result.y_test
-```
-
-### Model Calibration
-
-```python
-result = await pipeline.calibrate(
-    model_name="churn_v1",
-    method="isotonic",  # "platt" (sigmoid) or "isotonic"
-    cv=5,
-)
-# Returns calibrated model with CalibratedClassifierCV
 ```
 
 ### Nested Runs & Auto-Logging
@@ -139,24 +171,10 @@ from kailash_ml import ExperimentTracker
 tracker = ExperimentTracker(conn)
 await tracker.initialize()
 
-# Nested runs — group trials under a parent
 async with tracker.run("hyperopt-sweep") as parent:
     for params in param_grid:
         async with tracker.run("trial", parent_run_id=parent.run_id) as child:
             await child.log_params(params)
-
-# Auto-logging — TrainingPipeline and HyperparameterSearch log automatically
-pipeline = TrainingPipeline(feature_store=fs, model_registry=registry, experiment_tracker=tracker)
-result = await pipeline.train(schema=schema, model_spec=spec, eval_spec=eval_spec)
-# Metrics, params, and artifacts logged to tracker automatically
-```
-
-### Inference Validation
-
-```python
-server = InferenceServer(model_registry=registry)
-# Raises ValueError if input DataFrame is missing required features
-prediction = await server.predict("model_v1", input_df)
 ```
 
 ## Decision Tree: kailash-ml vs kailash-align vs kailash-kaizen
@@ -173,32 +191,6 @@ prediction = await server.predict("model_v1", input_df)
 | Add agent intelligence to ML engines  | **kailash-ml[agents]** (uses Kaizen under the hood) |
 | Train RL policies (Gymnasium)         | **kailash-ml[rl]**                                  |
 
-## Architecture
-
-```
-kailash-ml/
-  engines/
-    _shared.py              <- Numeric dtypes, model class validation
-    _feature_sql.py         <- ALL raw SQL (zero SQL in engine files)
-    _guardrails.py          <- AgentGuardrailMixin (5 mandatory guardrails)
-    feature_store.py        <- FeatureStore (ConnectionManager, polars-native)
-    model_registry.py       <- ModelRegistry (lifecycle, SHA256 integrity)
-    training_pipeline.py    <- TrainingPipeline (schema-driven)
-    inference_server.py     <- InferenceServer (Nexus, ONNX, caching)
-    drift_monitor.py        <- DriftMonitor (KS/chi2/PSI/JS)
-    model_explainer.py      <- ModelExplainer (SHAP, requires [explain])
-    experiment_tracker.py   <- MLflow-compatible run tracking (nested runs, auto-logging)
-    hyperparameter_search.py <- Grid/random/bayesian/successive halving
-    automl_engine.py        <- Agent-infused AutoML
-    ensemble.py             <- Blend/stack/bag/boost
-    preprocessing.py        <- Auto-setup from FeatureSchema
-  agents/                   <- 6 Kaizen agents (requires kailash-ml[agents])
-    tools.py                <- Dumb data endpoints (LLM-first)
-  rl/                       <- RLTrainer, EnvironmentRegistry, PolicyRegistry
-  interop.py                <- SOLE conversion point (polars <-> sklearn/pandas/arrow)
-  bridge/                   <- OnnxBridge (export + verification)
-```
-
 ## Polars-Native Rule (ABSOLUTE)
 
 Every engine accepts and returns `polars.DataFrame`. Conversion to numpy/pandas/LightGBM Dataset happens ONLY in `interop.py` at sklearn/framework boundaries.
@@ -209,8 +201,60 @@ df = pl.read_csv("data.csv")
 await fs.ingest("features", schema, df)
 
 # DO NOT: Convert to pandas first
-df_pd = pd.read_csv("data.csv")  # WRONG -- polars is the native format
+df_pd = pd.read_csv("data.csv")  # WRONG — polars is the native format
 ```
+
+## Interop Conversion Table
+
+All conversions live in `interop.py`. Import from there only.
+
+| Function                   | From             | To                                   | Use When                    |
+| -------------------------- | ---------------- | ------------------------------------ | --------------------------- |
+| `to_sklearn_input()`       | polars DataFrame | (X: ndarray, y: ndarray, info: dict) | Training with sklearn       |
+| `from_sklearn_output()`    | ndarray          | polars DataFrame                     | Converting predictions back |
+| `to_lgb_dataset()`         | polars DataFrame | lightgbm.Dataset                     | Training with LightGBM      |
+| `to_hf_dataset()`          | polars DataFrame | datasets.Dataset                     | HuggingFace integration     |
+| `polars_to_arrow()`        | polars DataFrame | pyarrow.Table                        | Arrow IPC / Parquet         |
+| `from_arrow()`             | pyarrow.Table    | polars DataFrame                     | Ingesting Arrow data        |
+| `to_pandas()`              | polars DataFrame | pandas.DataFrame                     | Legacy pandas interop       |
+| `from_pandas()`            | pandas.DataFrame | polars DataFrame                     | Ingesting pandas data       |
+| `polars_to_dict_records()` | polars DataFrame | list[dict]                           | JSON serialization          |
+| `dict_records_to_polars()` | list[dict]       | polars DataFrame                     | JSON deserialization        |
+
+## Architecture
+
+```
+kailash-ml/
+  engines/
+    _shared.py              ← Numeric dtypes, model class validation
+    _feature_sql.py         ← ALL raw SQL (zero SQL in engine files)
+    _guardrails.py          ← AgentGuardrailMixin (5 mandatory guardrails)
+    feature_store.py        ← FeatureStore (ConnectionManager, polars-native)
+    model_registry.py       ← ModelRegistry (lifecycle, SHA256 integrity)
+    training_pipeline.py    ← TrainingPipeline (schema-driven)
+    inference_server.py     ← InferenceServer (Nexus, ONNX, caching)
+    drift_monitor.py        ← DriftMonitor (KS/chi2/PSI/JS)
+    model_explainer.py      ← ModelExplainer (SHAP, [explain])
+    experiment_tracker.py   ← MLflow-compatible tracking (nested runs)
+    hyperparameter_search.py ← Grid/random/bayesian/successive halving
+    automl_engine.py        ← Agent-infused AutoML
+    ensemble.py             ← Blend/stack/bag/boost
+    preprocessing.py        ← Auto-setup from FeatureSchema
+  agents/                   ← 6 Kaizen agents ([agents])
+    tools.py                ← Dumb data endpoints (LLM-first)
+  rl/                       ← RLTrainer, EnvironmentRegistry, PolicyRegistry
+  interop.py                ← SOLE conversion point
+  bridge/                   ← OnnxBridge (export + verification)
+```
+
+### Internal Module Guide
+
+| Module            | Purpose                                                                                   | When to Touch                          |
+| ----------------- | ----------------------------------------------------------------------------------------- | -------------------------------------- |
+| `_shared.py`      | NUMERIC_DTYPES, ALLOWED_MODEL_PREFIXES, validate_model_class(), compute_metrics_by_name() | Adding new model frameworks or metrics |
+| `_feature_sql.py` | ALL raw SQL for FeatureStore (zero SQL elsewhere)                                         | Any FeatureStore schema/query change   |
+| `_guardrails.py`  | AgentGuardrailMixin (cost budget, audit trail, approval gate)                             | Adding agent integration to any engine |
+| `interop.py`      | SOLE conversion point: polars ↔ sklearn/lgb/arrow/pandas/hf                               | Adding new framework interop           |
 
 ## 6 ML Agents (kailash-ml[agents])
 
@@ -239,12 +283,19 @@ trainer = RLTrainer(env_registry=env_reg, policy_registry=PolicyRegistry())
 result = await trainer.train(env_id="CartPole-v1", algorithm="PPO", total_timesteps=100_000)
 ```
 
-## Security
+## Security Checklist
 
-- **SQL safety**: `_feature_sql.py` is the sole SQL touchpoint. `_validate_identifier()` on all interpolated identifiers.
-- **Model class allowlist**: `validate_model_class()` restricts imports to: `sklearn.`, `lightgbm.`, `xgboost.`, `catboost.`, `kailash_ml.`, `torch.`, `lightning.`
-- **Financial validation**: `math.isfinite()` on all budget/cost fields (NaN bypasses comparisons, Inf defeats bounds).
-- **Bounded collections**: `deque(maxlen=N)` for audit trails, cost logs, trial history.
+When writing or reviewing kailash-ml engine code, verify:
+
+- [ ] **SQL identifiers**: All interpolated identifiers pass through `_validate_identifier()` (from `kailash.db.dialect`)
+- [ ] **SQL types**: Column types validated via `_validate_sql_type()` allowlist (INTEGER, REAL, TEXT, BLOB, NUMERIC)
+- [ ] **SQL placement**: Zero raw SQL outside `_feature_sql.py` — all queries go through that module
+- [ ] **Model classes**: Dynamic model imports validated via `validate_model_class()` against ALLOWED_MODEL_PREFIXES (`sklearn.`, `lightgbm.`, `xgboost.`, `catboost.`, `kailash_ml.`, `torch.`, `lightning.`)
+- [ ] **Financial fields**: `math.isfinite()` on all cost/budget fields (NaN/Inf bypass comparisons)
+- [ ] **Table prefix**: Regex-validated in constructor (`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+- [ ] **Bounded collections**: Audit trails, cost logs, trial history use `deque(maxlen=N)`
+- [ ] **Agent guardrails**: Engines with agent integration inherit `AgentGuardrailMixin` (cost budget + approval gate)
+- [ ] **Interop boundary**: Conversions happen ONLY in `interop.py`, nowhere else
 
 ## Skill Files
 
@@ -272,3 +323,5 @@ result = await trainer.train(env_id="CartPole-v1", algorithm="PPO", total_timest
 - [03-nexus](../03-nexus/SKILL.md) — Multi-channel deployment (InferenceServer)
 - [04-kaizen](../04-kaizen/SKILL.md) — AI agent framework (ML agents)
 - [35-kailash-align](../35-kailash-align/SKILL.md) — LLM fine-tuning and alignment
+</content>
+</invoke>

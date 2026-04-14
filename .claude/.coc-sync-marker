@@ -1,7 +1,6 @@
-{
-  "synced_at": "2026-04-08T08:12:12Z",
-  "source": "loom",
-  "source_version": "2.7.0",
-  "agent": "coc-sync (Gate 2)",
-  "variant": "py"
-}
+last_sync: 2026-04-14T13:00:00Z
+source: loom/kailash-coc-claude-py
+version: 3.4.8
+files_updated: 43
+files_new: 6
+files_preserved: true

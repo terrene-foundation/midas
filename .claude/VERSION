@@ -1,16 +1,101 @@
 {
-  "version": "3.2.0",
-  "type": "coc-use-template",
-  "description": "COC USE template for Python SDK projects",
-  "released": "2026-04-08",
+  "version": "3.4.2",
+  "type": "coc-project",
+  "description": "COC project (Python SDK) — Midas autonomous investment platform",
+  "released": "2026-04-13",
   "upstream": {
-    "name": "kailash",
-    "type": "coc-source",
-    "version": "2.8.0",
-    "build_version": "2.8.0",
-    "synced_at": "2026-04-09T02:30:00+08:00"
+    "template": "kailash-coc-claude-py",
+    "template_repo": "terrene-foundation/kailash-coc-claude-py",
+    "template_version": "3.4.8",
+    "synced_at": "2026-04-14T00:00:00Z",
+    "sdk_packages": {
+      "kailash": "2.8.5",
+      "kailash-dataflow": "2.0.7",
+      "kailash-nexus": "2.0.1",
+      "kailash-kaizen": "2.7.3",
+      "kailash-pact": "0.8.1",
+      "kailash-mcp": "0.2.3",
+      "kailash-ml": "0.9.0",
+      "kailash-align": "0.3.1",
+      "kailash-trust": "0.1.0",
+      "kaizen-agents": "0.9.2"
+    }
   },
   "changelog": [
+    {
+      "version": "3.4.2",
+      "date": "2026-04-13",
+      "summary": "Enforce high effort + disable adaptive thinking in project settings.",
+      "changes": [
+        "SETTINGS: effortLevel: high + CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1."
+      ]
+    },
+    {
+      "version": "3.4.1",
+      "date": "2026-04-13",
+      "summary": "SDK pin bump — kailash 2.8.4→2.8.5 (removed conflicting kailash-mcp entry point), added kailash-mcp>=0.2.3 (correct entry point, deprecated shim removed, kailash>=2.8.5 floor).",
+      "changes": [
+        "PINS: kailash 2.8.4→2.8.5.",
+        "PINS: added kailash-mcp>=0.2.3 (was missing from dependencies)."
+      ]
+    },
+    {
+      "version": "3.4.0",
+      "date": "2026-04-12",
+      "summary": "Sync kailash-py 2.8.4 post-v2.8.4 codify — red team institutional learnings (3 new rule additions, 5 new skills, 2 SKILL index expansions).",
+      "changes": [
+        "RULE: rules/dataflow-identifier-safety.md — added MUST Rule 5 'Hardcoded Identifier Lists MUST Still Validate' (defense-in-depth for static lists).",
+        "RULE: rules/python-environment.md — added MUST Rule 4 'No Duplicate Sub-Package Test Deps In Root Dev Deps' (hypothesis MemoryError fix).",
+        "RULE: rules/observability.md — added MUST Rule 8 'Schema-Revealing Field Names MUST Be Logged At DEBUG Or Hashed' (classification/masking log hygiene).",
+        "NEW SKILL: skills/01-core-sdk/runtime-progress.md — ProgressRegistry for node progress tracking (contextvars, thread-safe callbacks, bounded deque).",
+        "NEW SKILL: skills/01-core-sdk/runtime-watchdog.md — EventLoopWatchdog for asyncio stall detection (heartbeat + thread, StallReport).",
+        "NEW SKILL: skills/02-dataflow/cache-cas-fail-closed.md — CAS fail-closed pattern when primitive can only be satisfied by one backend.",
+        "NEW SKILL: skills/02-dataflow/dataflow-fabric-cache-consumers.md — Fabric cache control, consumer adapters, MCP tool generation.",
+        "NEW SKILL: skills/02-dataflow/dataflow-provenance-audit.md — Provenance[T] field tracking, audit trail persistence, EventStoreBackend.",
+        "SKILL INDEX: skills/01-core-sdk/SKILL.md — added Runtime Diagnostics section.",
+        "SKILL INDEX: skills/02-dataflow/SKILL.md — added Provenance & Audit, Cache Patterns sections.",
+        "PINS: kailash 2.7.0→2.8.4, kailash-nexus 2.0.0→2.0.1, kailash-dataflow 2.0.0→2.0.6, kailash-kaizen 2.6.0→2.7.3, kailash-ml 0.8.0→0.9.0, kaizen-agents 0.8.0→0.9.2."
+      ]
+    },
+    {
+      "version": "3.3.0",
+      "date": "2026-04-12",
+      "summary": "Sync loom eacd989 — Specs authority system: new specs-authority.md rule (domain truth management, 8 MUST rules), new proposal-protocol guide (3-state lifecycle), all 6 phase commands updated with specs integration (read/write/verify), agents.md gains specs-context-in-delegation section, artifact-flow.md gains proposal lifecycle rules.",
+      "changes": [
+        "NEW: rules/specs-authority.md — CO tier. specs/ as single source of domain truth. 8 MUST rules: _index.md manifest, domain ontology organization, detailed not summaries, phase commands read specs, first-instance updates, deviation acknowledgment, delegation includes specs, large file splitting.",
+        "NEW: guides/co-setup/09-proposal-protocol.md — CO tier. Upstream proposal protocol for /codify Step 7 (BUILD→loom) and Step 8 (loom→atelier). Fresh/append formats, tier suggestions, reporting templates.",
+        "MODIFIED: commands/analyze.md — New Step 5: Create specs/ (MUST before red team). Step 6 (red team) now includes brief-to-spec traceability verification.",
+        "MODIFIED: commands/todos.md — Phase Check: specs/_index.md read gate (STOP if missing). Todos must reference spec files. Spec update discipline on new contracts.",
+        "MODIFIED: commands/implement.md — Context anchoring Step 2: spec re-read added as first priority. Brief staleness check. Step 7: spec deviation check, orchestrator-only spec writes.",
+        "MODIFIED: commands/redteam.md — Step 1: specs/** added as PRIMARY audit source. Specs-to-code field-level verification, cross-spec consistency, brief-to-spec coverage checks.",
+        "MODIFIED: commands/codify.md — Steps 7/8 refactored to reference proposal protocol guide. Step 2: specs/ added to knowledge extraction sources.",
+        "MODIFIED: commands/wrapup.md — specs/ added to 'free' context list (Domain specs).",
+        "MODIFIED: rules/agents.md — New section: Specs Context in Delegation (MUST). Worktree section preserved as stripped (Python-irrelevant).",
+        "MODIFIED: rules/artifact-flow.md — Proposal Lifecycle section added (3-state: pending_review/reviewed/distributed). Append-not-overwrite, reset-on-append, archive-before-fresh MUST rules with BLOCKED phrases."
+      ]
+    },
+    {
+      "version": "3.2.2",
+      "date": "2026-04-11",
+      "summary": "Sync loom — Arbor session rule updates: python-environment (explicit venv interpreter + monorepo editable installs) and infrastructure-sql (lazy driver imports upgraded from soft to MUST with regression test requirement). Both global-coc, from 2026-04-11 arbor-upstream-fixes session.",
+      "changes": [
+        "MODIFIED: rules/python-environment.md — MUST Rule 1: bare python/python3/pytest BLOCKED, must use .venv/bin/python or uv run (pyenv shim trap). MUST Rule 2: monorepo packages/*/pyproject.toml must be editable-installed, PYTHONPATH workaround BLOCKED.",
+        "MODIFIED: rules/infrastructure-sql.md — §8 rewritten as MUST: adapter classes wrapping optional drivers (motor, pymongo, asyncpg, aiomysql, aiosqlite, aiokafka, redis.asyncio) MUST import driver inside connect(), top-level import BLOCKED. Added §8a: regression test for lazy-import required (grep-only defense insufficient).",
+        "SDK PINS: still deferred (pending PyPI release of 2.8.1 chain)"
+      ]
+    },
+    {
+      "version": "3.2.1",
+      "date": "2026-04-09",
+      "summary": "Sync loom 2.8.0 — Gate 2: kaizen variant skill overlay (16 MODIFIED + 1 NEW kaizen-align-serving.md), 2 new hooks (integration-hygiene.js, auto-format.js). SDK pins deferred — SDK packages not yet on PyPI.",
+      "changes": [
+        "NEW: skills/04-kaizen/kaizen-align-serving.md — Align serving patterns (LoRA, TGI, vLLM, Ray Serve)",
+        "MODIFIED: 16 kaizen skill files from variant/py overlay (USE-context model-name fixes, gpt-4 -> os.environ LLM_MODEL)",
+        "NEW: scripts/hooks/integration-hygiene.js — PostToolUse detector for raw SQL, mock data, silent swallows",
+        "NEW: scripts/hooks/auto-format.js — auto-format hook",
+        "SDK PINS: deferred (kailash 2.7.0, kailash-nexus 2.0.0, kailash-dataflow 2.0.1, kailash-kaizen 2.6.0, kaizen-agents 0.8.0, kailash-mcp 0.2.0 — pending PyPI release)"
+      ]
+    },
     {
       "version": "3.2.0",
       "date": "2026-04-08",

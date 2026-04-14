@@ -38,7 +38,7 @@ Read the spec text verbatim. For each promised artifact, write the literal asser
 | "`StreamingAgent.run_stream()` yields `TextDelta` tokens incrementally"      | grep `def run_stream` in src; AST: must yield ≥2 distinct values across the loop, NOT a single yield from a single `inner.run_async()` call |
 | "`BaseAgentConfig` has frozen field `posture: Posture`"                      | grep `posture:` in `BaseAgentConfig` dataclass body                                                                                         |
 | "`@deprecated` decorator applied to 7 extension points"                      | grep `@deprecated` in `base_agent.py` — must hit ≥7 distinct methods                                                                        |
-| "MOVE `client.py` from `old_path/` to `new_path/`"                           | source must be deleted OR <50 LOC OR import-and-warn shim                                                                                   |
+| "MOVE `client.py` from `src/kailash/mcp_server/` to `packages/kailash-mcp/`" | source must be deleted OR <50 LOC OR import-and-warn shim                                                                                   |
 
 ### Step 2: Run The 9 Verification Checks
 
@@ -102,11 +102,11 @@ For every "MOVE A → B" task, the source path A MUST satisfy ONE of:
 - (c) imports from B AND emits `DeprecationWarning`
 
 ```bash
-wc -l old_path/client.py new_path/client.py
+wc -l src/kailash/mcp_server/client.py packages/kailash-mcp/src/kailash_mcp/client.py
 # Both 1088 lines → CRITICAL: copied not moved (drift risk)
 
 # If source is a thin shim, verify it imports from new path AND warns:
-grep -E "from new_module.client import|warnings.warn.*Deprecat" old_path/client.py
+grep -E "from kailash_mcp.client import|warnings.warn.*Deprecat" src/kailash/mcp_server/client.py
 ```
 
 #### 5. New Test Coverage Verification
@@ -135,7 +135,7 @@ grep -rln "test.*prompt.*injection\|test.*tool.*description.*injection" tests/
 For every "consumer X migrates to import from Y" task, grep the consumer file for the OLD import path. Hits = FAIL (migration didn't happen).
 
 ```bash
-grep -rn "from kailash.mcp_server.client\|import kailash.mcp_server.client" packages/kaizen-agents/src/
+grep -rn "from kailash_mcp.client\|import kailash_mcp.client" packages/kaizen-agents/src/
 # Any hits → FAIL: migration incomplete
 ```
 

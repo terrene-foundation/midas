@@ -13,7 +13,7 @@ The Core SDK provides the foundational building blocks for creating custom workf
 
 - **110+ Workflow Nodes**: Pre-built nodes for AI, API, database, file operations, logic, and more
 - **WorkflowBuilder API**: String-based workflow construction with type safety
-- **Dual Runtime Support**: AsyncLocalRuntime (Docker/async) and LocalRuntime (CLI/scripts)
+- **Dual Runtime Support**: AsyncLocalRuntime (Docker/Nexus) and LocalRuntime (CLI/scripts)
 - **Advanced Patterns**: Cyclic workflows, conditional execution, error handling
 - **MCP Integration**: Built-in Model Context Protocol support
 - **Parameter Passing**: Flexible data flow between nodes
@@ -59,6 +59,11 @@ with LocalRuntime() as runtime:
 - **[switchnode-patterns](switchnode-patterns.md)** - Conditional routing with SwitchNode
 - **[pythoncode-best-practices](pythoncode-best-practices.md)** - PythonCode node best practices
 - **[mcp-integration-guide](mcp-integration-guide.md)** - Model Context Protocol integration
+
+### Runtime Diagnostics
+
+- **[runtime-progress](runtime-progress.md)** - ProgressRegistry for node progress tracking (contextvars, thread-safe callbacks, bounded deque)
+- **[runtime-watchdog](runtime-watchdog.md)** - EventLoopWatchdog for asyncio stall detection (heartbeat + thread, StallReport, task stack capture)
 
 ## Key Concepts
 
@@ -106,7 +111,7 @@ workflow.connect("node1", "node2", mapping={"content": "input", "meta": "metadat
 
 ### Runtime Selection
 
-- **AsyncLocalRuntime**: For Docker/async (async contexts) - async-first, no threading, 10-100x faster
+- **AsyncLocalRuntime**: For Docker/Nexus (async contexts) - async-first, no threading, 10-100x faster
 - **LocalRuntime**: For CLI/scripts (sync contexts) - synchronous execution with thread support
 - **get_runtime()**: Auto-detection helper that selects appropriate runtime based on context
 
@@ -137,14 +142,14 @@ Both LocalRuntime and AsyncLocalRuntime inherit from BaseRuntime with shared cap
 
 ## Critical Rules
 
-- ✅ ALWAYS: `runtime.execute(workflow.build())`
-- ✅ String-based nodes: `workflow.add_node("NodeName", "id", {})`
-- ✅ 4-parameter connections: `(source_id, source_param, target_id, target_param)`
-- ✅ Docker/async: Use AsyncLocalRuntime (mandatory)
-- ✅ CLI/Scripts: Use LocalRuntime
-- ❌ NEVER: `workflow.execute(runtime)`
-- ❌ NEVER: Instance-based nodes
-- ❌ NEVER: Use LocalRuntime in Docker (causes hangs)
+- ALWAYS: `runtime.execute(workflow.build())`
+- String-based nodes: `workflow.add_node("NodeName", "id", {})`
+- 4-parameter connections: `(source_id, source_param, target_id, target_param)`
+- Docker/Nexus: Use AsyncLocalRuntime (mandatory)
+- CLI/Scripts: Use LocalRuntime
+- NEVER: `workflow.execute(runtime)`
+- NEVER: Instance-based nodes
+- NEVER: Use LocalRuntime in Docker (causes hangs)
 
 ## When to Use This Skill
 
