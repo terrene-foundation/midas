@@ -57,7 +57,7 @@ def _register_models(db: DataFlow) -> None:
     class prices:
         id: int
         ticker: str
-        date: str
+        period_end: str
         open: float = 0.0
         high: float = 0.0
         low: float = 0.0
@@ -65,16 +65,22 @@ def _register_models(db: DataFlow) -> None:
         adj_close: float = 0.0
         volume: float = 0.0
         source: str = "eodhd"
+        filed_at: str = ""
+        restated_at: str = ""
+        source_vintage: str = ""
 
     # -- 2. corporate_actions ------------------------------------------------
     @db.model
     class corporate_actions:
         id: int
         ticker: str
-        date: str
+        period_end: str
         action_type: str
         value: float = 0.0
         description: str = ""
+        filed_at: str = ""
+        restated_at: str = ""
+        source_vintage: str = ""
 
     # -- 3. fundamentals -----------------------------------------------------
     @db.model
@@ -127,21 +133,27 @@ def _register_models(db: DataFlow) -> None:
     class macro:
         id: int
         series_name: str
-        date: str
+        period_end: str
         value: float = 0.0
         vintage: str = ""
         source: str = "fred"
         unit: str = ""
+        filed_at: str = ""
+        restated_at: str = ""
+        source_vintage: str = ""
 
     # -- 7. alt_data ---------------------------------------------------------
     @db.model
     class alt_data:
         id: int
         series_name: str
-        date: str
+        period_end: str
         value: float = 0.0
         source: str = ""
         metadata_json: str = ""
+        filed_at: str = ""
+        restated_at: str = ""
+        source_vintage: str = ""
 
     # -- 8. features ---------------------------------------------------------
     @db.model
@@ -153,6 +165,8 @@ def _register_models(db: DataFlow) -> None:
         as_of_date: str
         value: float = 0.0
         computation_hash: str = ""
+        filed_at: str = ""
+        status: str = "active"
 
     # -- 9. embeddings -------------------------------------------------------
     @db.model
@@ -168,13 +182,16 @@ def _register_models(db: DataFlow) -> None:
     @db.model
     class latent_state:
         id: int
-        model_family: str
-        model_version: str
-        as_of_date: str
-        state_vector: str = ""
-        posterior_variance: str = ""
-        log_likelihood: float = 0.0
-        is_champion: bool = False
+        state_id: str = ""
+        period_end: str = ""
+        filed_at: str = ""
+        learner_family: str = ""
+        learner_role: str = ""  # champion | challenger_shadow
+        z_dim: int = 0
+        z_vector: str = ""  # JSON-encoded list of floats
+        z_covariance: str = ""  # JSON-encoded diagonal covariance
+        z_scale: float = 0.0
+        pool_index: int = 0
 
     # -- 11. positions -------------------------------------------------------
     @db.model
@@ -253,6 +270,10 @@ def _register_models(db: DataFlow) -> None:
         sample_count: int = 0
         parameter_count: int = 0
         trained_at: str = ""
+        config_hash: str = ""
+        parent_version: str = ""
+        pool_layer: str = ""
+        metrics_json: str = ""
 
     # -- 16. universe_changelog ----------------------------------------------
     @db.model
@@ -268,13 +289,17 @@ def _register_models(db: DataFlow) -> None:
     @db.model
     class audit_log:
         id: int
+        audit_id: str = ""
         rule_name: str
         action: str
-        details_json: str = ""
+        details: str = ""
         severity: str = "info"
         instrument: str = ""
         decision_id: str = ""
-        agent_id: str = ""
+        agent: str = ""
+        period_end: str = ""
+        filed_at: str = ""
+        z_t_snapshot: str = ""
 
     # -- 18. quotes ----------------------------------------------------------
     @db.model
@@ -288,7 +313,11 @@ def _register_models(db: DataFlow) -> None:
         mid_price: float = 0.0
         spread_bps: float = 0.0
         timestamp: str
+        period_end: str = ""
         source: str = "ibkr"
+        filed_at: str = ""
+        restated_at: str = ""
+        source_vintage: str = ""
 
     # -- 19. fills -----------------------------------------------------------
     @db.model
@@ -304,6 +333,10 @@ def _register_models(db: DataFlow) -> None:
         venue: str = ""
         fill_timestamp: str
         broker_fill_id: str = ""
+        period_end: str = ""
+        filed_at: str = ""
+        restated_at: str = ""
+        source_vintage: str = ""
 
     # -- 20. fills_synthetic -------------------------------------------------
     @db.model
@@ -315,6 +348,10 @@ def _register_models(db: DataFlow) -> None:
         fill_qty: float = 0.0
         expected_partial: bool = False
         scenario_json: str = ""
+        period_end: str = ""
+        filed_at: str = ""
+        restated_at: str = ""
+        source_vintage: str = ""
 
     # -- 21. fee_schedule ----------------------------------------------------
     @db.model
@@ -343,6 +380,10 @@ def _register_models(db: DataFlow) -> None:
         gap_cost: float = 0.0
         total_cost: float = 0.0
         timestamp: str
+        period_end: str = ""
+        filed_at: str = ""
+        restated_at: str = ""
+        source_vintage: str = ""
 
     # -- 23. sweep_history ---------------------------------------------------
     @db.model
@@ -355,6 +396,21 @@ def _register_models(db: DataFlow) -> None:
         fee: float = 0.0
         sweep_timestamp: str
         broker_sweep_id: str = ""
+        period_end: str = ""
+        filed_at: str = ""
+        restated_at: str = ""
+        source_vintage: str = ""
+
+    # -- 24. credentials ------------------------------------------------------
+    @db.model
+    class credentials:
+        id: int
+        service: str
+        key_name: str
+        encrypted_value: str
+        expires_at: str = ""
+        last_rotated_at: str = ""
+        active: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +442,7 @@ FABRIC_TABLES: list[str] = [
     "fee_schedule",
     "cost_attribution",
     "sweep_history",
+    "credentials",
 ]
 
 

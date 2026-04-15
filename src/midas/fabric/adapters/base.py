@@ -307,7 +307,7 @@ class BaseAdapter(ABC):
                     "filed_at": now.isoformat(),
                     "agent": f"adapter:{self.SOURCE_NAME}",
                     "rule_name": operation,
-                    "decision": "SUCCESS" if success else "FAILURE",
+                    "action": "SUCCESS" if success else "FAILURE",
                     "details": json.dumps(details_payload),
                     "z_t_snapshot": None,
                 },

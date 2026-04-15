@@ -118,7 +118,7 @@ class FeatureStore:
             "value": value,
             "as_of_date": as_of_date,
             "filed_at": filed_at,
-            "version": version,
+            "feature_version": version,
             "computation_hash": row_hash,
             "status": _VERSION_STATUS_ACTIVE,
         }
@@ -169,7 +169,7 @@ class FeatureStore:
             filter={
                 "instrument": instrument,
                 "feature_name": feature_name,
-                "version": version,
+                "feature_version": version,
                 "as_of_date": as_of_date,
             },
         )
@@ -291,7 +291,7 @@ class FeatureStore:
 
         versions: set[str] = set()
         for row in rows:
-            v = row.get("version")
+            v = row.get("feature_version")
             if v is not None:
                 versions.add(v)
 
@@ -321,7 +321,7 @@ class FeatureStore:
         rows = await db.express.list(
             _FEATURES_TABLE,
             filter={
-                "version": version,
+                "feature_version": version,
                 "status": _VERSION_STATUS_ACTIVE,
             },
         )

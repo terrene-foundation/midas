@@ -205,14 +205,39 @@ First live decision ships with an extended brief and a confirmation step even if
 
 ## 7. Upgrade Contracts (Concrete)
 
-| Transition | Minimum contract                                                                                                                           |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| L0 → L1    | Paper trading complete + report reviewed + user Go-Live                                                                                    |
-| L1 → L2    | N live operating days + positive override-convergence + no degradation events + positive early calibration on at least one allocation head |
-| L2 → L3    | M routine rebalances executed cleanly + positive Brinson allocation effect over the window + no compliance vetoes for policy violations    |
-| L3 → L4    | Extended track record + user explicit opt-in + the user has experienced at least one Elevated state transition                             |
+> **T-00-06 Update:** 3-month windows are too noisy for autonomy decisions. A 3-month Brinson attribution yields ~12 data points — insufficient to distinguish 30-bps-per-quarter skill from zero. All L3/L4 promotion contracts require a 12-month primary window.
+
+### 7.1 Window Hierarchy
+
+| Window          | Role                                                          |
+| --------------- | ------------------------------------------------------------- |
+| 1-week          | Context signal only — never triggers autonomy decisions       |
+| 1-month         | Primary reporting window                                      |
+| 3-month         | Context signal only — NOT a promotion trigger                 |
+| 12-month        | **Primary track-record window for L3/L4 promotion contracts** |
+| Since inception | Lifetime context                                              |
+
+### 7.2 Track-Record Gates For L3/L4
+
+A promotion proposal to L3 or L4 fires only when ALL of the following are true:
+
+1. **12-month bootstrap lower bound** — the 90% confidence interval lower bound of the 12-month Sharpe ratio exceeds the floor, not the point estimate. Bootstrap with 1,000 resamples minimum.
+2. **Pool-consistency gate** — the strategy was positive in at least 8 of the 12 trailing monthly periods (not just the aggregate). A strategy that won 12% in aggregate but was negative in 7 of 12 months is not consistent.
+3. **Minimum-activity gate** — at least M (default: 6) routine rebalance events occurred in the 12-month window. A strategy with low turnover cannot be evaluated on outcome quality.
+4. **Aggregate 12-month Sharpe ratio** — point estimate exceeds the champion's 12-month Sharpe in the same latent region.
+
+### 7.3 Concrete Promotion Table
+
+| Transition | Minimum contract                                                                                                                              |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| L0 → L1    | Paper trading complete + report reviewed + user Go-Live                                                                                       |
+| L1 → L2    | N live operating days + positive override-convergence + no degradation events + positive early calibration on at least one allocation head    |
+| L2 → L3    | M ≥ 6 rebalances in 12-month window + bootstrap lower bound Sharpe > floor + positive in ≥ 8/12 trailing months + no compliance vetoes        |
+| L3 → L4    | 12-month primary window (same gates as L2, extended track record) + user explicit opt-in + user has experienced ≥ 1 Elevated state transition |
 
 Concrete values for N, M, and the various thresholds are set in `11-compliance-and-risk.md` §rules registry, not hardcoded here — they are data, and the user may adjust them (within reason) in Settings. Starting defaults are conservative.
+
+> **Why bootstrap CI lower bound, not point estimate?** A point estimate of Sharpe = 0.8 could be Sharpe = 0.2 with 90% confidence. Requiring the lower bound to exceed the floor prevents promotions where the apparent skill is entirely within the noise band.
 
 ---
 

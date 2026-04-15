@@ -57,7 +57,7 @@ class TestFabricEngine:
     def test_all_23_tables_registered(self, db):
         """T-01-01: All 23 fabric tables must be registered."""
         models = db.list_models()
-        assert len(models) == 23
+        assert len(models) == 24
 
     def test_expected_tables_present(self, db):
         """T-01-01: Every table from the spec must exist."""
@@ -67,7 +67,7 @@ class TestFabricEngine:
 
     def test_fabric_tables_constant_matches(self):
         """T-01-01: FABRIC_TABLES constant has correct count."""
-        assert len(FABRIC_TABLES) == 23
+        assert len(FABRIC_TABLES) == 24
 
     def test_duplicate_free_table_list(self):
         """T-01-01: No duplicate table names."""
@@ -84,12 +84,13 @@ class TestFabricCRUD:
             "prices",
             {
                 "ticker": "SPY",
-                "date": "2024-01-02",
+                "period_end": "2024-01-02",
                 "open": 470.0,
                 "high": 475.0,
                 "low": 469.0,
                 "close": 474.0,
                 "volume": 1000000.0,
+                "filed_at": "2024-01-03T00:00:00+00:00",
             },
         )
         assert result is not None

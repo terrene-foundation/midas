@@ -89,11 +89,13 @@ Attribution is computed on a rolling basis:
 
 - 1-week (noisy, context only)
 - 1-month (primary reporting window)
-- 3-month (promotion contract window)
-- 12-month (track record summary)
+- 3-month (**context signal only — NOT a promotion trigger**)
+- 12-month (\*\*primary track-record window for L3/L4 promotion contracts)
 - Since inception (lifetime)
 
-Short windows are shown for context but do not drive autonomy decisions — they are too noisy. Promotion contracts read 3-month and 12-month windows.
+Short windows (1-week, 3-month) are visible in the UI but **never trigger autonomy transitions**. The 12-month window is the primary gate. A 3-month Brinson attribution has ~12 data points — insufficient to distinguish 30-bps-per-quarter skill from zero.
+
+> **T-00-06:** Promotion proposals for L3 and L4 require the 12-month bootstrap confidence interval lower bound to exceed the floor. See `08-autonomy-and-trust.md` §7 for the full track-record contract.
 
 ---
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from kailash_dataflow import DataFlow
+from dataflow import DataFlow
 
 from midas.fabric.models import (
     AS_OF_DATE_KEY,
@@ -122,7 +122,7 @@ class DataFlowFabricReader(FabricReader):
             filter={
                 "learner_family": learner_family,
                 "learner_role": "champion",
-                AS_OF_DATE_KEY: ctx.as_of_date.isoformat(),
+                "filed_at": ctx.as_of_date.isoformat(),
             },
         )
         return [self._row_to_latent_state(r) for r in rows]
@@ -223,10 +223,16 @@ class DataFlowFabricReader(FabricReader):
         )
 
     def _row_to_latent_state(self, row: dict) -> LatentStateRecord:
-        z_vector = tuple(row["z_vector"]) if row.get("z_vector") else ()
+        import json
+
+        z_vector_raw = row.get("z_vector", "")
+        z_vector = (
+            tuple(json.loads(z_vector_raw)) if z_vector_raw and z_vector_raw != "None" else ()
+        )
         z_cov = None
-        if row.get("z_covariance"):
-            z_cov = tuple(tuple(r) for r in row["z_covariance"])
+        z_cov_raw = row.get("z_covariance", "")
+        if z_cov_raw and z_cov_raw != "None":
+            z_cov = tuple(tuple(r) for r in json.loads(z_cov_raw))
 
         return LatentStateRecord(
             state_id=row["state_id"],
@@ -307,6 +313,8 @@ class DataFlowFabricWriter(FabricWriter):
         )
 
     async def write_latent_state(self, record: LatentStateRecord) -> None:
+        import json
+
         await self._df.express.create(
             "latent_state",
             {
@@ -316,9 +324,11 @@ class DataFlowFabricWriter(FabricWriter):
                 "learner_family": record.learner_family,
                 "learner_role": record.learner_role,
                 "z_dim": record.z_dim,
-                "z_vector": list(record.z_vector),
+                "z_vector": json.dumps(list(record.z_vector)),
                 "z_covariance": (
-                    [list(row) for row in record.z_covariance] if record.z_covariance else None
+                    json.dumps([list(row) for row in record.z_covariance])
+                    if record.z_covariance
+                    else None
                 ),
                 "z_scale": record.z_scale,
                 "pool_index": record.pool_index,
