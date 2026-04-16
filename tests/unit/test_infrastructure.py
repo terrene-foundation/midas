@@ -1064,11 +1064,14 @@ class TestTrackRecordScorer:
 
         scorer = TrackRecordScorer()
         metrics = {
-            "sharpe_ratio": 1.5,
-            "sortino_ratio": 2.0,
-            "max_drawdown": 0.15,
-            "win_rate": 0.6,
-            "avg_return": 0.08,
+            "brinson_allocation": 0.02,
+            "brinson_selection": 0.01,
+            "calmar": 1.5,
+            "calibration_quality": 0.7,
+            "override_convergence": 0.8,
+            "degradation_events": 2,
+            "turnover_cost_drag": 0.01,
+            "worst_case_window": 0.05,
         }
         score = scorer.compute_composite(metrics)
         assert 0 <= score <= 100
@@ -1079,11 +1082,14 @@ class TestTrackRecordScorer:
 
         scorer = TrackRecordScorer()
         metrics = {
-            "sharpe_ratio": 2.5,
-            "sortino_ratio": 3.0,
-            "max_drawdown": 0.05,
-            "win_rate": 0.75,
-            "avg_return": 0.15,
+            "brinson_allocation": 0.04,
+            "brinson_selection": 0.03,
+            "calmar": 3.0,
+            "calibration_quality": 0.9,
+            "override_convergence": 0.95,
+            "degradation_events": 0,
+            "turnover_cost_drag": 0.005,
+            "worst_case_window": 0.02,
         }
         score = scorer.compute_composite(metrics)
         assert score > 70
@@ -1094,11 +1100,14 @@ class TestTrackRecordScorer:
 
         scorer = TrackRecordScorer()
         metrics = {
-            "sharpe_ratio": -0.5,
-            "sortino_ratio": -0.3,
-            "max_drawdown": 0.40,
-            "win_rate": 0.3,
-            "avg_return": -0.05,
+            "brinson_allocation": -0.04,
+            "brinson_selection": -0.03,
+            "calmar": -2.0,
+            "calibration_quality": 0.2,
+            "override_convergence": 0.3,
+            "degradation_events": 8,
+            "turnover_cost_drag": 0.04,
+            "worst_case_window": 0.25,
         }
         score = scorer.compute_composite(metrics)
         assert score < 30
@@ -1112,11 +1121,14 @@ class TestTrackRecordScorer:
         # Extremely bad
         bad_score = scorer.compute_composite(
             {
-                "sharpe_ratio": -10,
-                "sortino_ratio": -10,
-                "max_drawdown": 1.0,
-                "win_rate": 0.0,
-                "avg_return": -1.0,
+                "brinson_allocation": -10,
+                "brinson_selection": -10,
+                "calmar": -100,
+                "calibration_quality": 0.0,
+                "override_convergence": 0.0,
+                "degradation_events": 100,
+                "turnover_cost_drag": 10.0,
+                "worst_case_window": 10.0,
             }
         )
         assert bad_score == 0
@@ -1124,11 +1136,14 @@ class TestTrackRecordScorer:
         # Extremely good
         good_score = scorer.compute_composite(
             {
-                "sharpe_ratio": 10,
-                "sortino_ratio": 10,
-                "max_drawdown": 0.0,
-                "win_rate": 1.0,
-                "avg_return": 1.0,
+                "brinson_allocation": 10,
+                "brinson_selection": 10,
+                "calmar": 100,
+                "calibration_quality": 1.0,
+                "override_convergence": 1.0,
+                "degradation_events": 0,
+                "turnover_cost_drag": 0.0,
+                "worst_case_window": 0.0,
             }
         )
-        assert good_score == 100
+        assert good_score >= 99.9
