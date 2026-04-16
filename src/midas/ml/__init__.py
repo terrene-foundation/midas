@@ -70,14 +70,16 @@ class ModelRegistry:
                 filter={"model_family": model_family, "model_version": model_version},
             )
             return rows[-1] if rows else None
-        except Exception:
+        except Exception as exc:
+            logger.error("registry.get_failed", error=str(exc))
             return None
 
     async def list_by_pool(self, pool_layer: str) -> list[dict[str, Any]]:
         try:
             rows = await self._db.express.list("model_registry")
             return [r for r in rows if r.get("pool_layer", "") == pool_layer]
-        except Exception:
+        except Exception as exc:
+            logger.error("registry.list_by_pool_failed", error=str(exc))
             return []
 
     async def get_champion(self, pool_layer: str) -> dict[str, Any] | None:
@@ -87,7 +89,8 @@ class ModelRegistry:
             )
             matching = [r for r in rows if pool_layer in r.get("model_type", "")]
             return matching[-1] if matching else None
-        except Exception:
+        except Exception as exc:
+            logger.error("registry.get_champion_failed", error=str(exc))
             return None
 
     async def get_challengers(self, pool_layer: str) -> list[dict[str, Any]]:
@@ -96,7 +99,8 @@ class ModelRegistry:
                 "model_registry", filter={"promotion_status": "shadow"}
             )
             return [r for r in rows if pool_layer in r.get("model_type", "")]
-        except Exception:
+        except Exception as exc:
+            logger.error("registry.get_challengers_failed", error=str(exc))
             return []
 
     async def promote(self, model_family: str, model_version: str) -> bool:
@@ -109,7 +113,8 @@ class ModelRegistry:
                 # Demote existing champion — in v1 we just register a new version
                 pass
             return True
-        except Exception:
+        except Exception as exc:
+            logger.error("registry.promote_failed", family=model_family, error=str(exc))
             return False
 
     async def retire(self, model_family: str, model_version: str) -> bool:
@@ -119,7 +124,8 @@ class ModelRegistry:
                 filter={"model_family": model_family, "model_version": model_version},
             )
             return len(rows) > 0
-        except Exception:
+        except Exception as exc:
+            logger.error("registry.retire_failed", family=model_family, error=str(exc))
             return False
 
     async def get_lineage(self, model_family: str) -> list[dict[str, Any]]:
@@ -127,5 +133,6 @@ class ModelRegistry:
             return await self._db.express.list(
                 "model_registry", filter={"model_family": model_family}
             )
-        except Exception:
+        except Exception as exc:
+            logger.error("registry.get_lineage_failed", family=model_family, error=str(exc))
             return []

@@ -92,7 +92,8 @@ class CredentialStore:
                 }
                 for r in rows
             ]
-        except Exception:
+        except Exception as exc:
+            logger.error("credential.list_services_failed", error=str(exc))
             return []
 
     async def is_expired(self, service: str, key_name: str) -> bool:
@@ -108,5 +109,6 @@ class CredentialStore:
                 return False
             exp_dt = datetime.fromisoformat(expires)
             return datetime.now(timezone.utc) > exp_dt
-        except Exception:
+        except Exception as exc:
+            logger.error("credential.is_expired_failed", service=service, error=str(exc))
             return True

@@ -110,8 +110,13 @@ class OECDAdapter(BaseAdapter):
                 try:
                     await db.express.create("macro", row)
                     created_rows.append(row)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "macro.row_write_failed",
+                        series=row.get("series_name", "unknown"),
+                        period=row.get("period_end", "unknown"),
+                        error=str(exc),
+                    )
 
         await self._write_audit(
             operation=operation,
@@ -219,8 +224,13 @@ class IMFAdapter(BaseAdapter):
             try:
                 await db.express.create("macro", row)
                 created_rows.append(row)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "macro.row_write_failed",
+                    series=row.get("series_name", "unknown"),
+                    period=row.get("period_end", "unknown"),
+                    error=str(exc),
+                )
 
         await self._write_audit(
             operation=operation,
@@ -370,8 +380,13 @@ class TruflationAdapter(BaseAdapter):
             try:
                 await db.express.create("macro", row)
                 created_rows.append(row)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "macro.row_write_failed",
+                    series=row.get("series_name", "unknown"),
+                    period=row.get("period_end", "unknown"),
+                    error=str(exc),
+                )
 
         await self._write_audit(
             operation=operation,

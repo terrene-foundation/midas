@@ -31,7 +31,8 @@ class NAVComputation:
                 "positions",
                 filter={"as_of_date": as_of_date},
             )
-        except Exception:
+        except Exception as exc:
+            logger.error("nav.positions_fetch_failed", as_of_date=as_of_date, error=str(exc))
             positions = []
 
         positions_value = 0.0

@@ -277,15 +277,40 @@ class DebateTools:
         """
         logger.info("tools.backtest_scenario", period=period, tickers=list(weights.keys()))
 
-        try:
-            # Fetch price data for the weighted instruments
-            for ticker in weights:
-                await self._db.express.list("prices", filter={"ticker": ticker})
-        except Exception as exc:
-            logger.warning("tools.backtest_scenario.data_fetch_failed", error=str(exc))
+        # Compute returns from fetched price data if available
+        returns_data = {}
+        for ticker in weights:
+            try:
+                rows = await self._db.express.list("prices", filter={"ticker": ticker})
+                if rows:
+                    # Sort by date, compute total return from price series
+                    sorted_rows = sorted(rows, key=lambda r: r.get("date", ""))
+                    if len(sorted_rows) >= 2:
+                        first_price = float(sorted_rows[0].get("close", 0))
+                        last_price = float(sorted_rows[-1].get("close", 0))
+                        if first_price > 0:
+                            returns_data[ticker] = (last_price - first_price) / first_price
+            except Exception as exc:
+                logger.warning(
+                    "tools.backtest_scenario.ticker_fetch_failed", ticker=ticker, error=str(exc)
+                )
 
-        # Return a structured backtest result template
-        # The actual computation would use real price data
+        if returns_data:
+            # Portfolio return = weighted sum of individual returns
+            total_return = sum(weights.get(t, 0) * ret for t, ret in returns_data.items())
+            return {
+                "weights": weights,
+                "period": period,
+                "total_return": total_return,
+                "annualized_return": total_return,  # simplified for period
+                "max_drawdown": 0.0,
+                "sharpe_ratio": 0.0,
+                "volatility": 0.0,
+                "tickers_computed": len(returns_data),
+                "tickers_requested": len(weights),
+                "status": "partial",
+            }
+
         return {
             "weights": weights,
             "period": period,
@@ -294,7 +319,7 @@ class DebateTools:
             "max_drawdown": 0.0,
             "sharpe_ratio": 0.0,
             "volatility": 0.0,
-            "status": "computed",
+            "status": "no_price_data",
         }
 
     async def update_decision(self, decision_id: str, updates: dict) -> dict:

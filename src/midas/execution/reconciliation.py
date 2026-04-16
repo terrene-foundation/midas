@@ -82,7 +82,12 @@ class ReconciliationService:
         # Fetch orders that were filled on this date
         try:
             orders = await self._db.express.list("orders", filter={})
-        except Exception:
+        except Exception as exc:
+            logger.error(
+                "reconciliation.orders_fetch_failed",
+                as_of_date=as_of_date,
+                error=str(exc),
+            )
             orders = []
 
         # Filter to filled orders from the given date
