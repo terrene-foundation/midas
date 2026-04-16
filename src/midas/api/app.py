@@ -4,13 +4,14 @@ Nexus application factory for the Midas API.
 Creates and configures the FastAPI-based API with all routers mounted.
 Follows Kailash Nexus patterns for multi-channel deployment.
 
-Ref: specs/09, specs/10
+Ref: specs/09, specs/10, specs/11 S6.2 (JWT auth)
 """
 
 import logging
+import os
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from midas.api.routes import (
@@ -28,11 +29,15 @@ from midas.api.routes import (
 
 logger = logging.getLogger(__name__)
 
+# Paths that do NOT require authentication
+_PUBLIC_PATHS = {"/api/v1/health", "/api/v1/health/", "/docs", "/openapi.json", "/redoc"}
+
 
 def create_app(
     cors_origins: list[str] | None = None,
     title: str = "Midas API",
     version: str = "0.1.0",
+    api_key: str | None = None,
 ) -> FastAPI:
     """Create and configure the Midas FastAPI application.
 
@@ -44,6 +49,9 @@ def create_app(
         API title for OpenAPI docs.
     version:
         API version.
+    api_key:
+        API key for authentication. If None, reads MIDAS_API_KEY from env.
+        If the env var is also unset, auth is skipped (dev mode).
 
     Returns
     -------
@@ -54,6 +62,8 @@ def create_app(
         "http://localhost:3000",
         "http://localhost:8000",
     ]
+
+    effective_key = api_key or os.environ.get("MIDAS_API_KEY", "")
 
     app = FastAPI(
         title=title,
@@ -68,6 +78,29 @@ def create_app(
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     )
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        """API key authentication on all non-health endpoints."""
+        path = request.url.path
+        # Skip auth for health probes and OpenAPI docs
+        if path in _PUBLIC_PATHS or path.startswith("/api/v1/health/"):
+            return await call_next(request)
+        # Dev mode: no key configured means no auth
+        if not effective_key:
+            return await call_next(request)
+        # Check Authorization header
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+        elif auth.startswith("ApiKey "):
+            token = auth[7:]
+        else:
+            token = auth
+        if token != effective_key:
+            logger.warning("auth.unauthorized", extra={"path": path})
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+        return await call_next(request)
 
     # Mount all routers
     health = HealthRouter()

@@ -87,6 +87,22 @@ class BrinsonDecomposition:
         interaction_effect = float(np.sum(interaction_per_cat))
         total_active_return = allocation_effect + selection_effect + interaction_effect
 
+        # Guard against NaN/Inf in financial calculations
+        import math
+
+        for name, value in [
+            ("allocation_effect", allocation_effect),
+            ("selection_effect", selection_effect),
+            ("interaction_effect", interaction_effect),
+            ("total_active_return", total_active_return),
+        ]:
+            if not math.isfinite(value):
+                logger.warning(
+                    "brinson.non_finite_effect",
+                    effect=name,
+                    value=value,
+                )
+
         # Build per-category breakdown
         per_category = []
         for i in range(n):

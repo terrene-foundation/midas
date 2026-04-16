@@ -98,12 +98,14 @@ class DebateAgent:
         except json.JSONDecodeError:
             logger.warning("debate.result.parse_failed", content=result["content"][:200])
             parsed = {
-                "recommendation": result["content"],
-                "steel_man": "Parsing failed.",
-                "red_team": "Parsing failed.",
+                "recommendation": "parse_failed",
+                "steel_man": "",
+                "red_team": "",
                 "concession_count": 0,
-                "final_confidence": brief.get("confidence", 0.5),
+                "final_confidence": 0.0,
                 "rounds": debate_rounds,
+                "parse_error": True,
+                "raw_content_preview": result["content"][:100],
             }
 
         parsed.setdefault("rounds", debate_rounds)

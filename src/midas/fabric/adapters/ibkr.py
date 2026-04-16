@@ -288,7 +288,7 @@ class IBKRAdapter(BaseAdapter):
                 raise AdapterError(
                     self.SOURCE_NAME,
                     "oauth2_initial",
-                    f"client error: HTTP {response.status_code}: {response.text[:200]}",
+                    f"client error: HTTP {response.status_code}",
                 )
 
             return response.json()
@@ -412,7 +412,7 @@ class IBKRAdapter(BaseAdapter):
                 raise AdapterError(
                     self.SOURCE_NAME,
                     operation,
-                    f"client error: HTTP {response.status_code}: {response.text[:200]}",
+                    f"client error: HTTP {response.status_code}",
                 )
 
             return response.json()
@@ -519,7 +519,7 @@ class IBKRAdapter(BaseAdapter):
         mid = (bid + ask) / 2 if bid and ask else 0.0
         bid_size = float(data.get("bid_size", 0) or 0)
         ask_size = float(data.get("ask_size", 0) or 0)
-        spread_bps = ((ask - bid) / mid * 10000) if mid else 0.0
+        spread_bps = ((ask - bid) / mid * 10000) if mid > 1e-10 else 0.0
 
         result: dict[str, Any] = {
             "ticker": ticker,

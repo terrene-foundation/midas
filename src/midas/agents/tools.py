@@ -81,12 +81,31 @@ class DebateTools:
             }
 
         model = models[0]
+        calibration_json = model.get("calibration_json", "")
+        model_version = model.get("model_version", "unknown")
+
+        # Run prediction through the head model if available
+        prediction_result = None
+        try:
+            from midas.heads.prediction import predict_from_latent
+
+            prediction_result = await predict_from_latent(
+                head_name=head_name,
+                model_version=model_version,
+                z_t=z_t,
+                db=self._db,
+            )
+        except ImportError:
+            logger.debug("tools.query_head.prediction_not_available", head=head_name)
+        except Exception as exc:
+            logger.warning("tools.query_head.prediction_failed", head=head_name, error=str(exc))
+
         return {
             "head_name": head_name,
-            "model_version": model.get("model_version", "unknown"),
-            "prediction": "computed_from_z_t",
-            "calibration": model.get("calibration_json", ""),
-            "status": "ok",
+            "model_version": model_version,
+            "prediction": prediction_result,
+            "calibration": calibration_json,
+            "status": "ok" if prediction_result is not None else "prediction_unavailable",
             "z_dim": len(z_t),
         }
 

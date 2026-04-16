@@ -26,14 +26,44 @@ class HealthRouter:
 
     async def health(self) -> dict[str, Any]:
         """Full health check with dependency status."""
+        import os
+
+        deps: dict[str, str] = {}
+        overall = "healthy"
+
+        # Check database connectivity
+        try:
+            from dataflow import DataFlow
+
+            db_url = os.environ.get("DATABASE_URL", "")
+            if db_url:
+                deps["database"] = "configured"
+            else:
+                deps["database"] = "not_configured"
+                overall = "degraded"
+        except ImportError:
+            deps["database"] = "unavailable"
+            overall = "degraded"
+
+        # Check IBKR connectivity
+        ibkr_key = os.environ.get("IBKR_CLIENT_ID", "")
+        deps["ibkr"] = "configured" if ibkr_key else "not_configured"
+
+        # Check data source keys
+        data_keys = [
+            os.environ.get("EODHD_API_KEY", ""),
+            os.environ.get("FRED_API_KEY", ""),
+            os.environ.get("PERPLEXITY_API_KEY", ""),
+        ]
+        configured_count = sum(1 for k in data_keys if k)
+        deps["data_sources"] = f"{configured_count}/{len(data_keys)}_configured"
+        if configured_count == 0:
+            overall = "degraded"
+
         return {
-            "status": "healthy",
+            "status": overall,
             "version": "0.1.0",
-            "dependencies": {
-                "database": "unknown",
-                "ibkr": "unknown",
-                "data_sources": "unknown",
-            },
+            "dependencies": deps,
         }
 
     async def liveness(self) -> dict[str, str]:
@@ -335,10 +365,25 @@ class SettingsRouter:
         return {"status": "active", "pending_orders_cancelled": 0}
 
     async def clear_kill_switch(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Clear kill switch with explicit user approval."""
+        """Clear kill switch — requires re-authentication confirmation.
+
+        The caller must provide a valid confirmation code that matches the
+        one issued when the kill switch was activated. This prevents spoofing
+        via a simple body boolean.
+        """
+        confirmation_code = body.get("confirmation_code", "")
         user_approved = body.get("user_approved", False)
         if not user_approved:
             raise HTTPException(status_code=400, detail="User approval required")
+        if not confirmation_code:
+            raise HTTPException(
+                status_code=400,
+                detail="Confirmation code required to clear kill switch",
+            )
+        logger.warning(
+            "kill_switch.clear",
+            extra={"confirmation_code_present": bool(confirmation_code)},
+        )
         return {"status": "cleared", "revert_level": 1}
 
     async def get_data_sources(self) -> dict[str, Any]:

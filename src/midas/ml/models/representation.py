@@ -92,12 +92,14 @@ class MaskedAutoencoder(nn.Module):
         self.latent_dim = latent_dim
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        z = self.encode(x)
+        # Broadcast pooled z to sequence length and decode
         if x.dim() == 3:
-            x_flat = x.reshape(-1, x.size(-1))
+            seq_len = x.size(1)
+            z_expanded = z.unsqueeze(1).expand(-1, seq_len, -1)  # (batch, seq, latent_dim)
+            recon = self.decoder(z_expanded)  # (batch, seq, input_dim)
         else:
-            x_flat = x
-        z = self.encoder(x_flat)
-        recon = self.decoder(z)
+            recon = self.decoder(z)
         return z, recon
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
@@ -136,7 +138,9 @@ class VariationalAutoencoder(nn.Module):
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         return self.decoder(z)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if x.dim() == 3:
             x_flat = x.mean(dim=1)
         else:
@@ -147,7 +151,10 @@ class VariationalAutoencoder(nn.Module):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         z = mu + eps * std
-        recon = self.decode(z)
+        # Broadcast z to sequence length for full-sequence reconstruction (like SSLTransformer)
+        seq_len = x.size(1)
+        z_expanded = z.unsqueeze(1).expand(-1, seq_len, -1)
+        recon = self.decode(z_expanded)
         return z, recon, mu, logvar
 
 
@@ -159,12 +166,19 @@ class DeepSSM(nn.Module):
         self.input_proj = nn.Linear(input_dim, hidden_dim)
         self.state_proj = nn.Linear(hidden_dim, latent_dim)
         self.transition = nn.Linear(latent_dim, latent_dim, bias=False)
-        self.output_proj = nn.Linear(latent_dim, input_dim)
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, latent_dim * 2),
+            nn.ReLU(),
+            nn.Linear(latent_dim * 2, input_dim),
+        )
         self.latent_dim = latent_dim
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         z = self.encode(x)
-        recon = self.output_proj(z)
+        # Broadcast pooled z to sequence length and decode
+        seq_len = x.size(1)
+        z_expanded = z.unsqueeze(1).expand(-1, seq_len, -1)  # (batch, seq, latent_dim)
+        recon = self.decoder(z_expanded)  # (batch, seq, input_dim)
         return z, recon
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:

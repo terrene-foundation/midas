@@ -6,6 +6,8 @@ plus cash and minus unsettled amounts.
 Ref: M16 — NAV computation
 """
 
+import math
+
 import structlog
 from dataflow import DataFlow
 
@@ -46,6 +48,16 @@ class NAVComputation:
         unsettled = 0.0
 
         nav = positions_value + cash - unsettled
+
+        if not math.isfinite(nav):
+            self._log.warning(
+                "nav.non_finite",
+                nav=nav,
+                positions_value=positions_value,
+                cash=cash,
+                unsettled=unsettled,
+            )
+            nav = 0.0
 
         self._log.info(
             "nav.compute.ok",
