@@ -597,14 +597,14 @@ class TestRulesEngine:
 
 
 class TestBlockingRules:
-    """Tests for the 16 blocking compliance rules."""
+    """Tests for the 19 blocking compliance rules."""
 
-    def test_all_16_blocking_rules_created(self):
-        """Factory function returns exactly 16 blocking rules."""
+    def test_all_19_blocking_rules_created(self):
+        """Factory function returns exactly 19 blocking rules."""
         from midas.compliance.blocking_rules import create_blocking_rules
 
         rules = create_blocking_rules()
-        assert len(rules) == 16
+        assert len(rules) == 19
 
     def test_all_blocking_rules_have_unique_ids(self):
         """Every blocking rule has a unique rule_id."""
@@ -854,6 +854,45 @@ class TestBlockingRules:
         result = await engine.evaluate_rule("api.ibkr_health", context)
         assert result.passed is False
 
+    @pytest.mark.asyncio
+    async def test_ibkr_rate_limit_blocks(self, started_db):
+        """api.ibkr_rate_limit blocks when rate limit is approaching."""
+        from midas.compliance.blocking_rules import create_blocking_rules
+        from midas.compliance.rules_engine import RulesEngine
+
+        engine = RulesEngine(started_db)
+        engine.register_rules(create_blocking_rules())
+        context = {"ibkr_rate_limit_remaining": 3, "ibkr_rate_limit_threshold": 5}
+        result = await engine.evaluate_rule("api.ibkr_rate_limit", context)
+        assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_ibkr_session_invalid_blocks(self, started_db):
+        """api.ibkr_session_invalid blocks when session is invalid."""
+        from midas.compliance.blocking_rules import create_blocking_rules
+        from midas.compliance.rules_engine import RulesEngine
+
+        engine = RulesEngine(started_db)
+        engine.register_rules(create_blocking_rules())
+        context = {"ibkr_session_valid": False}
+        result = await engine.evaluate_rule("api.ibkr_session_invalid", context)
+        assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_quote_moved_since_brief_blocks(self, started_db):
+        """exec.quote_moved_since_brief blocks when price moved beyond threshold."""
+        from midas.compliance.blocking_rules import create_blocking_rules
+        from midas.compliance.rules_engine import RulesEngine
+
+        engine = RulesEngine(started_db)
+        engine.register_rules(create_blocking_rules())
+        context = {
+            "price_change_since_brief_pct": 0.005,
+            "regime_adaptive_threshold": 0.003,
+        }
+        result = await engine.evaluate_rule("exec.quote_moved_since_brief", context)
+        assert result.passed is False
+
 
 # ---------------------------------------------------------------------------
 # M12: Escalation Rules (7 rules)
@@ -964,19 +1003,19 @@ class TestEscalationRules:
 
 
 # ---------------------------------------------------------------------------
-# M12: Warning Rules (5 rules)
+# M12: Warning Rules (7 rules)
 # ---------------------------------------------------------------------------
 
 
 class TestWarningRules:
-    """Tests for the 5 warning rules."""
+    """Tests for the 7 warning rules."""
 
-    def test_all_5_warning_rules_created(self):
-        """Factory function returns exactly 5 warning rules."""
+    def test_all_7_warning_rules_created(self):
+        """Factory function returns exactly 7 warning rules."""
         from midas.compliance.warning_rules import create_warning_rules
 
         rules = create_warning_rules()
-        assert len(rules) == 5
+        assert len(rules) == 7
 
     def test_all_warning_rules_have_unique_ids(self):
         """Every warning rule has a unique rule_id."""
@@ -987,27 +1026,27 @@ class TestWarningRules:
         assert len(ids) == len(set(ids)), f"Duplicate IDs: {ids}"
 
     @pytest.mark.asyncio
-    async def test_high_volatility_warns(self, started_db):
-        """warn.high_volatility warns when vol exceeds percentile."""
+    async def test_turnover_high_warns(self, started_db):
+        """warn.turnover_high warns when monthly turnover exceeds threshold."""
         from midas.compliance.warning_rules import create_warning_rules
         from midas.compliance.rules_engine import RulesEngine
 
         engine = RulesEngine(started_db)
         engine.register_rules(create_warning_rules())
-        context = {"current_vol": 0.30, "vol_80th_percentile": 0.20}
-        result = await engine.evaluate_rule("warn.high_volatility", context)
+        context = {"monthly_turnover": 2.0, "turnover_threshold": 1.5}
+        result = await engine.evaluate_rule("warn.turnover_high", context)
         assert result.passed is False
 
     @pytest.mark.asyncio
-    async def test_elevated_attention_warns(self, started_db):
-        """warn.elevated_attention warns when a_t enters ELEVATED band."""
+    async def test_fee_intensity_warns(self, started_db):
+        """warn.fee_intensity warns when fee ratio exceeds threshold."""
         from midas.compliance.warning_rules import create_warning_rules
         from midas.compliance.rules_engine import RulesEngine
 
         engine = RulesEngine(started_db)
         engine.register_rules(create_warning_rules())
-        context = {"attention_band": "ELEVATED"}
-        result = await engine.evaluate_rule("warn.elevated_attention", context)
+        context = {"fee_ratio": 0.6, "fee_ratio_threshold": 0.5}
+        result = await engine.evaluate_rule("warn.fee_intensity", context)
         assert result.passed is False
 
     @pytest.mark.asyncio
@@ -1023,31 +1062,52 @@ class TestWarningRules:
         assert result.passed is False
 
     @pytest.mark.asyncio
-    async def test_high_cost_ratio_warns(self, started_db):
-        """warn.high_cost_ratio warns when cost ratio exceeds threshold."""
+    async def test_user_override_pattern_warns(self, started_db):
+        """warn.user_override_pattern warns when override rate exceeds threshold."""
         from midas.compliance.warning_rules import create_warning_rules
         from midas.compliance.rules_engine import RulesEngine
 
         engine = RulesEngine(started_db)
         engine.register_rules(create_warning_rules())
-        context = {"cost_ratio": 0.6, "cost_ratio_threshold": 0.5}
-        result = await engine.evaluate_rule("warn.high_cost_ratio", context)
+        context = {"override_rate": 0.6, "override_rate_threshold": 0.5}
+        result = await engine.evaluate_rule("warn.user_override_pattern", context)
         assert result.passed is False
 
     @pytest.mark.asyncio
-    async def test_approaching_concentration_limit_warns(self, started_db):
-        """warn.approaching_concentration_limit warns at 80% of limit."""
+    async def test_fx_exposure_warns(self, started_db):
+        """warn.fx_exposure warns when FX concentration exceeds threshold."""
         from midas.compliance.warning_rules import create_warning_rules
         from midas.compliance.rules_engine import RulesEngine
 
         engine = RulesEngine(started_db)
         engine.register_rules(create_warning_rules())
-        context = {
-            "position_weight": 0.09,
-            "concentration_limit": 0.10,
-        }
-        result = await engine.evaluate_rule("warn.approaching_concentration_limit", context)
-        assert result.passed is False  # 90% of limit > 80% threshold
+        context = {"fx_exposure": 0.40, "fx_exposure_threshold": 0.30}
+        result = await engine.evaluate_rule("warn.fx_exposure", context)
+        assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_halted_warns(self, started_db):
+        """warn.halted warns when instrument is halted."""
+        from midas.compliance.warning_rules import create_warning_rules
+        from midas.compliance.rules_engine import RulesEngine
+
+        engine = RulesEngine(started_db)
+        engine.register_rules(create_warning_rules())
+        context = {"instrument_halted": True}
+        result = await engine.evaluate_rule("warn.halted", context)
+        assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_auction_window_warns(self, started_db):
+        """warn.auction_window warns when order submitted during auction window."""
+        from midas.compliance.warning_rules import create_warning_rules
+        from midas.compliance.rules_engine import RulesEngine
+
+        engine = RulesEngine(started_db)
+        engine.register_rules(create_warning_rules())
+        context = {"in_auction_window": True}
+        result = await engine.evaluate_rule("warn.auction_window", context)
+        assert result.passed is False
 
 
 # ---------------------------------------------------------------------------

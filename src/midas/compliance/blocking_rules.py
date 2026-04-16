@@ -1,16 +1,17 @@
-"""16 blocking compliance rules — hard gates that veto proposed trades.
+"""19 blocking compliance rules — hard gates that veto proposed trades.
 
 Each rule's predicate returns True when the rule is VIOLATED.
 Rules are data: registered at startup, modifiable without a release.
 
 Ref: specs/11-compliance-and-risk.md S3.1 (Blocking Rules)
+Ref: specs/14-ibkr-integration.md S12 (API and Execution Rules)
 """
 
 from midas.compliance.rules_engine import ComplianceRule, RuleSeverity
 
 
 def create_blocking_rules() -> list[ComplianceRule]:
-    """Create the v1 set of 16 blocking rules."""
+    """Create the v1 set of 19 blocking rules."""
     rules: list[ComplianceRule] = []
 
     # -- 1. env.drawdown_ceiling ---------------------------------------------
@@ -227,6 +228,44 @@ def create_blocking_rules() -> list[ComplianceRule]:
             severity=RuleSeverity.BLOCK,
             description="IBKR integration must report healthy",
             predicate=lambda ctx: ctx.get("ibkr_healthy", True) is False,
+        )
+    )
+
+    # -- 17. api.ibkr_rate_limit ----------------------------------------------
+    rules.append(
+        ComplianceRule(
+            rule_id="api.ibkr_rate_limit",
+            rule_name="IBKR Rate Limit",
+            category="api",
+            severity=RuleSeverity.BLOCK,
+            description="Block when IBKR API rate limit is approaching or breached",
+            predicate=lambda ctx: ctx.get("ibkr_rate_limit_remaining", 100)
+            <= ctx.get("ibkr_rate_limit_threshold", 5),
+        )
+    )
+
+    # -- 18. api.ibkr_session_invalid -----------------------------------------
+    rules.append(
+        ComplianceRule(
+            rule_id="api.ibkr_session_invalid",
+            rule_name="IBKR Session Invalid",
+            category="api",
+            severity=RuleSeverity.BLOCK,
+            description="Block when IBKR OAuth session is invalid or expired",
+            predicate=lambda ctx: ctx.get("ibkr_session_valid", True) is False,
+        )
+    )
+
+    # -- 19. exec.quote_moved_since_brief -------------------------------------
+    rules.append(
+        ComplianceRule(
+            rule_id="exec.quote_moved_since_brief",
+            rule_name="Quote Moved Since Brief",
+            category="exec",
+            severity=RuleSeverity.BLOCK,
+            description="Block when price moved beyond regime-adaptive threshold since brief",
+            predicate=lambda ctx: abs(ctx.get("price_change_since_brief_pct", 0))
+            > ctx.get("regime_adaptive_threshold", 0.003),
         )
     )
 

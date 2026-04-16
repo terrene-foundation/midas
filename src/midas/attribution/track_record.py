@@ -1,22 +1,26 @@
 """Composite track record scoring.
 
 Computes a 0-100 composite score from risk-adjusted performance metrics
-using a weighted formula that balances return, risk, and consistency.
+using a weighted formula that balances attribution, risk, calibration,
+and execution quality.
 
-Ref: M16 — Track record scorer
+Ref: specs/12-attribution.md S6.1 (Track Record Scorer Weights)
 """
 
 import structlog
 
 logger = structlog.get_logger("midas.attribution.track_record")
 
-# Weights for composite score components.
+# Weights for composite score components (specs/12 S6.1).
 _WEIGHTS = {
-    "sharpe_ratio": 0.25,
-    "sortino_ratio": 0.15,
-    "max_drawdown": 0.20,
-    "win_rate": 0.20,
-    "avg_return": 0.20,
+    "brinson_allocation": 0.15,
+    "brinson_selection": 0.15,
+    "calmar": 0.15,
+    "calibration_quality": 0.15,
+    "override_convergence": 0.10,
+    "degradation_events": 0.10,
+    "turnover_cost_drag": 0.10,
+    "worst_case_window": 0.10,
 }
 
 
@@ -35,8 +39,9 @@ class TrackRecordScorer:
         Parameters
         ----------
         metrics : dict
-            Must contain: sharpe_ratio, sortino_ratio, max_drawdown,
-            win_rate, avg_return.
+            Must contain: brinson_allocation, brinson_selection, calmar,
+            calibration_quality, override_convergence, degradation_events,
+            turnover_cost_drag, worst_case_window.
 
         Returns
         -------
@@ -44,34 +49,49 @@ class TrackRecordScorer:
             Score between 0 and 100.
         """
         # Normalize each component to a 0-1 scale
-        sharpe = metrics.get("sharpe_ratio", 0.0)
-        sortino = metrics.get("sortino_ratio", 0.0)
-        max_dd = metrics.get("max_drawdown", 0.0)
-        win_rate = metrics.get("win_rate", 0.5)
-        avg_return = metrics.get("avg_return", 0.0)
+        brinson_alloc = metrics.get("brinson_allocation", 0.0)
+        brinson_sel = metrics.get("brinson_selection", 0.0)
+        calmar = metrics.get("calmar", 0.0)
+        cal_quality = metrics.get("calibration_quality", 0.0)
+        override_conv = metrics.get("override_convergence", 0.0)
+        degradation = metrics.get("degradation_events", 0.0)
+        turnover_drag = metrics.get("turnover_cost_drag", 0.0)
+        worst_case = metrics.get("worst_case_window", 0.0)
 
-        # Sharpe: map [-2, 3] -> [0, 1]
-        sharpe_score = max(0.0, min(1.0, (sharpe + 2.0) / 5.0))
+        # Brinson allocation: map [-0.05, 0.05] -> [0, 1]
+        alloc_score = max(0.0, min(1.0, (brinson_alloc + 0.05) / 0.10))
 
-        # Sortino: map [-2, 4] -> [0, 1]
-        sortino_score = max(0.0, min(1.0, (sortino + 2.0) / 6.0))
+        # Brinson selection: map [-0.05, 0.05] -> [0, 1]
+        sel_score = max(0.0, min(1.0, (brinson_sel + 0.05) / 0.10))
 
-        # Max drawdown: map [0.5, 0] -> [0, 1] (lower drawdown is better)
-        dd_score = max(0.0, min(1.0, 1.0 - max_dd / 0.5))
+        # Calmar: map [-5, 5] -> [0, 1]
+        calmar_score = max(0.0, min(1.0, (calmar + 5.0) / 10.0))
 
-        # Win rate: already 0-1
-        win_score = max(0.0, min(1.0, win_rate))
+        # Calibration quality: already 0-1 (higher is better)
+        cal_score = max(0.0, min(1.0, cal_quality))
 
-        # Avg return: map [-0.2, 0.3] -> [0, 1]
-        return_score = max(0.0, min(1.0, (avg_return + 0.2) / 0.5))
+        # Override convergence: already 0-1 (higher is better)
+        override_score = max(0.0, min(1.0, override_conv))
+
+        # Degradation events: map [10, 0] -> [0, 1] (fewer is better)
+        degradation_score = max(0.0, min(1.0, 1.0 - degradation / 10.0))
+
+        # Turnover/cost drag: map [0.05, 0] -> [0, 1] (lower is better)
+        turnover_score = max(0.0, min(1.0, 1.0 - turnover_drag / 0.05))
+
+        # Worst-case window: map [0.30, 0] -> [0, 1] (lower is better)
+        worst_score = max(0.0, min(1.0, 1.0 - worst_case / 0.30))
 
         # Weighted composite
         raw_score = (
-            _WEIGHTS["sharpe_ratio"] * sharpe_score
-            + _WEIGHTS["sortino_ratio"] * sortino_score
-            + _WEIGHTS["max_drawdown"] * dd_score
-            + _WEIGHTS["win_rate"] * win_score
-            + _WEIGHTS["avg_return"] * return_score
+            _WEIGHTS["brinson_allocation"] * alloc_score
+            + _WEIGHTS["brinson_selection"] * sel_score
+            + _WEIGHTS["calmar"] * calmar_score
+            + _WEIGHTS["calibration_quality"] * cal_score
+            + _WEIGHTS["override_convergence"] * override_score
+            + _WEIGHTS["degradation_events"] * degradation_score
+            + _WEIGHTS["turnover_cost_drag"] * turnover_score
+            + _WEIGHTS["worst_case_window"] * worst_score
         )
 
         # Scale to 0-100 and clamp

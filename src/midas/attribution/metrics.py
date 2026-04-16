@@ -314,3 +314,73 @@ class RiskMetrics:
 
         # Never recovered: return days from trough to end
         return len(equity_curve) - 1 - trough_idx
+
+    @staticmethod
+    def m_squared(
+        portfolio_return: float,
+        portfolio_vol: float,
+        benchmark_return: float,
+        benchmark_vol: float,
+        risk_free_rate: float = 0.0,
+    ) -> float:
+        """Compute M-squared (Modigliani-Modigliani) measure.
+
+        Returns the portfolio return adjusted to the benchmark's risk level,
+        making it directly comparable to the benchmark return.
+
+        Formula: M2 = R_f + (Sharpe_p) * sigma_b
+        where Sharpe_p = (R_p - R_f) / sigma_p
+
+        Equivalently: M2 = R_b + (Sharpe_p - Sharpe_b) * sigma_b
+
+        Parameters
+        ----------
+        portfolio_return : float
+            Annualized portfolio return.
+        portfolio_vol : float
+            Annualized portfolio volatility (standard deviation).
+        benchmark_return : float
+            Annualized benchmark return.
+        benchmark_vol : float
+            Annualized benchmark volatility (standard deviation).
+        risk_free_rate : float
+            Risk-free rate (annualized).
+
+        Returns
+        -------
+        float
+            M-squared measure.
+        """
+        if portfolio_vol == 0.0:
+            return portfolio_return
+
+        portfolio_sharpe = (portfolio_return - risk_free_rate) / portfolio_vol
+        return risk_free_rate + portfolio_sharpe * benchmark_vol
+
+    @staticmethod
+    def treynor_ratio(
+        portfolio_return: float,
+        risk_free_rate: float,
+        beta: float,
+    ) -> float:
+        """Compute Treynor ratio (return per unit of systematic risk).
+
+        Formula: (R_p - R_f) / beta
+
+        Parameters
+        ----------
+        portfolio_return : float
+            Annualized portfolio return.
+        risk_free_rate : float
+            Risk-free rate (annualized).
+        beta : float
+            Portfolio beta relative to benchmark.
+
+        Returns
+        -------
+        float
+            Treynor ratio.
+        """
+        if beta == 0.0:
+            return 0.0
+        return (portfolio_return - risk_free_rate) / beta

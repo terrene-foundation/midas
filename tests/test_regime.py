@@ -56,6 +56,8 @@ class TestRegimeState:
             volatility_percentile=0.6,
             ood_score=0.4,
             transition_pressure=0.8,
+            model_disagreement=0.3,
+            drawdown_velocity=0.1,
             timestamp="2025-04-16T12:00:00+00:00",
         )
         assert state.a_t == 0.72
@@ -74,6 +76,8 @@ class TestRegimeState:
             volatility_percentile=0.1,
             ood_score=0.0,
             transition_pressure=0.0,
+            model_disagreement=0.0,
+            drawdown_velocity=0.0,
             timestamp="",
         )
         with pytest.raises(AttributeError):
@@ -87,6 +91,8 @@ class TestRegimeState:
             volatility_percentile=0.5,
             ood_score=0.3,
             transition_pressure=0.2,
+            model_disagreement=0.0,
+            drawdown_velocity=0.0,
             timestamp="2025-01-01T00:00:00+00:00",
         )
         s1 = RegimeState(**kwargs)
@@ -100,6 +106,8 @@ class TestRegimeState:
             volatility_percentile=0.0,
             ood_score=0.0,
             transition_pressure=0.0,
+            model_disagreement=0.0,
+            drawdown_velocity=0.0,
             timestamp="",
         )
         s1 = RegimeState(a_t=0.1, **base)
@@ -191,6 +199,8 @@ class TestGetRecommendedActions:
             volatility_percentile=0.5,
             ood_score=0.5,
             transition_pressure=0.5,
+            model_disagreement=0.0,
+            drawdown_velocity=0.0,
             timestamp="",
         )
         actions = RegimeRenderer.get_recommended_actions(state)
@@ -205,6 +215,8 @@ class TestGetRecommendedActions:
             volatility_percentile=0.9,
             ood_score=0.9,
             transition_pressure=0.9,
+            model_disagreement=0.0,
+            drawdown_velocity=0.0,
             timestamp="",
         )
         actions = RegimeRenderer.get_recommended_actions(state)
@@ -218,6 +230,8 @@ class TestGetRecommendedActions:
             volatility_percentile=0.1,
             ood_score=0.0,
             transition_pressure=0.0,
+            model_disagreement=0.0,
+            drawdown_velocity=0.0,
             timestamp="",
         )
         actions = RegimeRenderer.get_recommended_actions(state)
@@ -232,6 +246,8 @@ class TestGetRecommendedActions:
                 volatility_percentile=0.5,
                 ood_score=0.5,
                 transition_pressure=0.5,
+                model_disagreement=0.0,
+                drawdown_velocity=0.0,
                 timestamp="",
             )
             actions = RegimeRenderer.get_recommended_actions(state)
@@ -390,15 +406,19 @@ class TestRegimeRendererRender:
 
     def test_weights_sum_to_one(self):
         """Verify internal weight constants sum to 1.0."""
-        assert RegimeRenderer._W_VOL == pytest.approx(0.35)
-        assert RegimeRenderer._W_OOD == pytest.approx(0.30)
-        assert RegimeRenderer._W_TRANSITION == pytest.approx(0.20)
+        assert RegimeRenderer._W_VOL == pytest.approx(0.30)
+        assert RegimeRenderer._W_OOD == pytest.approx(0.25)
+        assert RegimeRenderer._W_TRANSITION == pytest.approx(0.15)
         assert RegimeRenderer._W_VARIANCE == pytest.approx(0.15)
+        assert RegimeRenderer._W_DISAGREEMENT == pytest.approx(0.10)
+        assert RegimeRenderer._W_DRAWDOWN_VELOCITY == pytest.approx(0.05)
         total = (
             RegimeRenderer._W_VOL
             + RegimeRenderer._W_OOD
             + RegimeRenderer._W_TRANSITION
             + RegimeRenderer._W_VARIANCE
+            + RegimeRenderer._W_DISAGREEMENT
+            + RegimeRenderer._W_DRAWDOWN_VELOCITY
         )
         assert total == pytest.approx(1.0)
 
@@ -416,30 +436,30 @@ class TestRegimeRendererRender:
 
     def test_all_max_inputs_zero_posterior_variance(self):
         """With vol=1, ood=1, trans=1, posterior=[x,x] (var=0),
-        a_t = 0.35*1 + 0.30*1 + 0.20*1 + 0.15*0 = 0.85."""
+        a_t = 0.30*1 + 0.25*1 + 0.15*1 + 0.15*0 + 0.10*0 + 0.05*0 = 0.70."""
         state = self.renderer.render(
             z_t_posterior=[0.5, 0.5],
             volatility=1.0,
             ood_score=1.0,
             change_point_prob=1.0,
         )
-        expected = 0.35 * 1.0 + 0.30 * 1.0 + 0.20 * 1.0 + 0.15 * 0.0
+        expected = 0.30 * 1.0 + 0.25 * 1.0 + 0.15 * 1.0 + 0.15 * 0.0 + 0.10 * 0.0 + 0.05 * 0.0
         assert state.a_t == pytest.approx(expected)
 
     def test_known_a_t_computation(self):
         """Manual a_t check: vol=0.5, ood=0.3, trans=0.4, posterior=[0.0, 1.0].
         Mean = 0.5, variance = ((0-0.5)^2 + (1-0.5)^2) / 2 = 0.25.
         var_signal = min(0.25 / 2.0, 1.0) = 0.125.
-        a_t = 0.35*0.5 + 0.30*0.3 + 0.20*0.4 + 0.15*0.125
-            = 0.175 + 0.09 + 0.08 + 0.01875
-            = 0.36375."""
+        a_t = 0.30*0.5 + 0.25*0.3 + 0.15*0.4 + 0.15*0.125 + 0.10*0 + 0.05*0
+            = 0.15 + 0.075 + 0.06 + 0.01875
+            = 0.30375."""
         state = self.renderer.render(
             z_t_posterior=[0.0, 1.0],
             volatility=0.5,
             ood_score=0.3,
             change_point_prob=0.4,
         )
-        expected = 0.35 * 0.5 + 0.30 * 0.3 + 0.20 * 0.4 + 0.15 * 0.125
+        expected = 0.30 * 0.5 + 0.25 * 0.3 + 0.15 * 0.4 + 0.15 * 0.125 + 0.10 * 0.0 + 0.05 * 0.0
         assert state.a_t == pytest.approx(expected)
 
     def test_higher_volatility_increases_a_t(self):
@@ -536,7 +556,7 @@ class TestRegimeRendererEdgeCases:
             ood_score=0.0,
             change_point_prob=0.0,
         )
-        # a_t = 0.35*0 + 0.30*0 + 0.20*0 + 0.15*0.5 = 0.075
+        # a_t = 0.30*0 + 0.25*0 + 0.15*0 + 0.15*0.5 + 0.10*0 + 0.05*0 = 0.075
         assert state.a_t == pytest.approx(0.075)
         assert state.z_t_posterior == []
 
@@ -583,8 +603,8 @@ class TestRegimeRendererEdgeCases:
             ood_score=1.0,
             change_point_prob=1.0,
         )
-        # a_t = 0.35 + 0.30 + 0.20 + 0.15*1.0 = 1.0 (clamped to 1.0)
-        assert state.a_t == pytest.approx(1.0)
+        # a_t = 0.30 + 0.25 + 0.15 + 0.15*1.0 + 0.10*0 + 0.05*0 = 0.85
+        assert state.a_t == pytest.approx(0.85)
 
     def test_nan_in_posterior_propagates_to_a_t(self):
         """NaN in z_t_posterior produces NaN in a_t (no silent masking).
@@ -645,15 +665,15 @@ class TestRegimeRendererEdgeCases:
 
     def test_multiple_renders_independent(self):
         """Calling render multiple times does not accumulate state."""
-        args = (
-            [0.1, 0.2],
-            0.3,
-            0.1,
-            0.2,
-            "2025-01-01T00:00:00Z",
+        kwargs = dict(
+            z_t_posterior=[0.1, 0.2],
+            volatility=0.3,
+            ood_score=0.1,
+            change_point_prob=0.2,
+            timestamp="2025-01-01T00:00:00Z",
         )
-        s1 = self.renderer.render(*args)
-        s2 = self.renderer.render(*args)
+        s1 = self.renderer.render(**kwargs)
+        s2 = self.renderer.render(**kwargs)
         assert s1.a_t == s2.a_t
 
     def test_band_matches_a_t(self):
@@ -737,7 +757,7 @@ class TestPosteriorVarianceSignal:
             change_point_prob=0.0,
         )
         # var_signal = min(2.0/2.0, 1.0) = 1.0
-        # a_t = 0.15 * 1.0 = 0.15
+        # a_t = 0.15 * 1.0 = 0.15 (only variance component, all others zero)
         assert state.a_t == pytest.approx(0.15)
 
     def test_variance_quarter_produces_signal_eighth(self):

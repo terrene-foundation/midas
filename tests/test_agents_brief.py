@@ -41,6 +41,9 @@ def _mock_brief_json() -> str:
                 "what_would_change_mind": "If VIX drops below 15.",
                 "risk_factors": "Geopolitical escalation risk.",
                 "provenance_links": ["news:123", "filing:456"],
+                "if_approved": "Reduced risk exposure, potential underperformance in rally.",
+                "if_rejected": "Maintain current allocation, higher downside risk.",
+                "historical_precedent": "Similar volatility regime in Q4 2022 led to 8% drawdown.",
             },
             "confidence": 0.72,
             "model_version": "gpt-4",
@@ -57,6 +60,7 @@ def _mock_debate_json() -> str:
             "red_team": "Macro headwinds argue for de-risking.",
             "concession_count": 2,
             "final_confidence": 0.65,
+            "resolution_state": "updated",
             "rounds": 3,
         }
     )
@@ -265,7 +269,7 @@ class TestAnalystAgent:
 
     @pytest.mark.asyncio
     async def test_compose_brief_produces_all_sections(self, provider):
-        """compose_brief returns dict with all 7 sections plus confidence and model_version."""
+        """compose_brief returns dict with all 10 sections plus confidence and model_version."""
         from midas.agents.analyst import AnalystAgent
 
         agent = AnalystAgent(provider)
@@ -286,6 +290,9 @@ class TestAnalystAgent:
             "what_would_change_mind",
             "risk_factors",
             "provenance_links",
+            "if_approved",
+            "if_rejected",
+            "historical_precedent",
         ]
         for section in required_sections:
             assert section in sections, f"Missing section: {section}"
@@ -345,6 +352,7 @@ class TestDebateAgent:
             "red_team",
             "concession_count",
             "final_confidence",
+            "resolution_state",
             "rounds",
         ]
         for key in required_keys:
@@ -683,6 +691,9 @@ class TestBriefTemplates:
                 "what_would_change_mind": "VIX below 15.",
                 "risk_factors": "Geopolitical tension.",
                 "provenance_links": ["news:1", "filing:2"],
+                "if_approved": "Continue holding, monitor closely.",
+                "if_rejected": "Consider reallocation to defensive assets.",
+                "historical_precedent": "Similar conditions in 2018 resolved favorably.",
             },
             "confidence": 0.75,
             "model_version": "gpt-4",

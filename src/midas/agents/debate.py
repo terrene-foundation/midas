@@ -22,6 +22,9 @@ class DebateAgent:
 
     DEBATE_SYSTEM_PROMPT = (
         "You are a debate moderator for investment decisions. "
+        "You MUST disagree when evidence warrants it; do not confabulate or "
+        "default to agreement. The red_team argument must be substantive and "
+        "evidence-based, not perfunctory. "
         "You MUST respond with valid JSON only, no markdown fences. "
         "The JSON must have keys: "
         '"recommendation" (string), '
@@ -29,6 +32,7 @@ class DebateAgent:
         '"red_team" (string), '
         '"concession_count" (integer), '
         '"final_confidence" (float between 0.0 and 1.0), '
+        '"resolution_state" (one of: "updated", "maintained", "open", "envelope_change"), '
         'and "rounds" (integer).'
     )
 
@@ -46,6 +50,22 @@ class DebateAgent:
 
     def __init__(self, provider):
         self._provider = provider
+        self._thread_store: dict[str, list[dict]] = {}
+
+    def store_thread(self, thread_id: str, messages: list[dict]) -> None:
+        """Persist debate messages keyed by thread_id."""
+        self._thread_store[thread_id] = list(messages)
+
+    def retrieve_thread(self, thread_id: str) -> list[dict]:
+        """Retrieve stored debate messages by thread_id.
+
+        Returns an empty list if the thread_id is unknown.
+        """
+        return list(self._thread_store.get(thread_id, []))
+
+    def list_threads(self) -> list[str]:
+        """Return all stored thread IDs."""
+        return list(self._thread_store.keys())
 
     async def debate(
         self,
@@ -103,6 +123,7 @@ class DebateAgent:
                 "red_team": "",
                 "concession_count": 0,
                 "final_confidence": 0.0,
+                "resolution_state": "open",
                 "rounds": debate_rounds,
                 "parse_error": True,
                 "raw_content_preview": result["content"][:100],
@@ -110,10 +131,16 @@ class DebateAgent:
 
         parsed.setdefault("rounds", debate_rounds)
 
+        # Store thread for persistence (specs/07 S3.6)
+        thread_id = str(hash(position) & 0xFFFFFFFF)
+        self.store_thread(thread_id, messages + [{"role": "assistant", "content": parsed}])
+
         logger.info(
             "debate.complete",
             concession_count=parsed.get("concession_count"),
             final_confidence=parsed.get("final_confidence"),
+            resolution_state=parsed.get("resolution_state"),
+            thread_id=thread_id,
         )
 
         return parsed

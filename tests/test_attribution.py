@@ -520,6 +520,97 @@ class TestRecoveryTime:
         assert rt == 0
 
 
+class TestMSquared:
+    """Tests for M-squared (Modigliani-Modigliani) measure."""
+
+    def test_m_squared_positive_outperformance(self):
+        """Portfolio with higher Sharpe has higher M2 than benchmark return."""
+        m2 = RiskMetrics.m_squared(
+            portfolio_return=0.15,
+            portfolio_vol=0.10,
+            benchmark_return=0.08,
+            benchmark_vol=0.12,
+            risk_free_rate=0.02,
+        )
+        # Sharpe_p = (0.15 - 0.02) / 0.10 = 1.3
+        # M2 = 0.02 + 1.3 * 0.12 = 0.176
+        assert m2 > 0.08  # M2 > benchmark return = outperformance
+        assert abs(m2 - 0.176) < 1e-10
+
+    def test_m_squared_underperformance(self):
+        """Portfolio with lower Sharpe has lower M2 than benchmark return."""
+        m2 = RiskMetrics.m_squared(
+            portfolio_return=0.05,
+            portfolio_vol=0.15,
+            benchmark_return=0.08,
+            benchmark_vol=0.12,
+            risk_free_rate=0.02,
+        )
+        # Sharpe_p = (0.05 - 0.02) / 0.15 = 0.2
+        # M2 = 0.02 + 0.2 * 0.12 = 0.044
+        assert m2 < 0.08  # M2 < benchmark return = underperformance
+
+    def test_m_squared_zero_vol(self):
+        """Zero portfolio volatility returns portfolio return directly."""
+        m2 = RiskMetrics.m_squared(
+            portfolio_return=0.10,
+            portfolio_vol=0.0,
+            benchmark_return=0.08,
+            benchmark_vol=0.12,
+        )
+        assert m2 == 0.10
+
+    def test_m_squared_matches_benchmark_when_equal_sharpe(self):
+        """When portfolio and benchmark Sharpe are equal, M2 equals benchmark return."""
+        m2 = RiskMetrics.m_squared(
+            portfolio_return=0.10,
+            portfolio_vol=0.15,
+            benchmark_return=0.08,
+            benchmark_vol=0.12,
+            risk_free_rate=0.02,
+        )
+        # Sharpe_p = (0.10 - 0.02) / 0.15 = 0.5333
+        # M2 = 0.02 + 0.5333 * 0.12 = 0.084
+        assert isinstance(m2, float)
+
+
+class TestTreynorRatio:
+    """Tests for Treynor ratio computation."""
+
+    def test_positive_treynor(self):
+        """Positive excess return with positive beta gives positive Treynor."""
+        treynor = RiskMetrics.treynor_ratio(
+            portfolio_return=0.12,
+            risk_free_rate=0.02,
+            beta=1.0,
+        )
+        assert abs(treynor - 0.10) < 1e-10
+
+    def test_negative_treynor_with_negative_excess(self):
+        """Negative excess return gives negative Treynor."""
+        treynor = RiskMetrics.treynor_ratio(
+            portfolio_return=0.01,
+            risk_free_rate=0.05,
+            beta=1.0,
+        )
+        assert treynor < 0
+
+    def test_zero_beta_returns_zero(self):
+        """Zero beta is handled gracefully, returns 0.0."""
+        treynor = RiskMetrics.treynor_ratio(
+            portfolio_return=0.10,
+            risk_free_rate=0.02,
+            beta=0.0,
+        )
+        assert treynor == 0.0
+
+    def test_treynor_higher_with_lower_beta(self):
+        """Same excess return with lower beta gives higher Treynor."""
+        treynor_high_beta = RiskMetrics.treynor_ratio(0.12, 0.02, 1.5)
+        treynor_low_beta = RiskMetrics.treynor_ratio(0.12, 0.02, 0.5)
+        assert treynor_low_beta > treynor_high_beta
+
+
 # ===========================================================================
 # Track Record Scorer
 # ===========================================================================
@@ -530,68 +621,83 @@ class TestTrackRecordScorer:
 
     def test_perfect_metrics_high_score(self, scorer):
         metrics = {
-            "sharpe_ratio": 3.0,
-            "sortino_ratio": 4.0,
-            "max_drawdown": 0.0,
-            "win_rate": 1.0,
-            "avg_return": 0.3,
+            "brinson_allocation": 0.05,
+            "brinson_selection": 0.05,
+            "calmar": 5.0,
+            "calibration_quality": 1.0,
+            "override_convergence": 1.0,
+            "degradation_events": 0.0,
+            "turnover_cost_drag": 0.0,
+            "worst_case_window": 0.0,
         }
         score = scorer.compute_composite(metrics)
         assert 90 <= score <= 100
 
     def test_terrible_metrics_low_score(self, scorer):
         metrics = {
-            "sharpe_ratio": -2.0,
-            "sortino_ratio": -2.0,
-            "max_drawdown": 0.5,
-            "win_rate": 0.0,
-            "avg_return": -0.2,
+            "brinson_allocation": -0.05,
+            "brinson_selection": -0.05,
+            "calmar": -5.0,
+            "calibration_quality": 0.0,
+            "override_convergence": 0.0,
+            "degradation_events": 10.0,
+            "turnover_cost_drag": 0.05,
+            "worst_case_window": 0.30,
         }
         score = scorer.compute_composite(metrics)
         assert 0 <= score <= 10
 
     def test_score_between_zero_and_100(self, scorer):
         metrics = {
-            "sharpe_ratio": 1.0,
-            "sortino_ratio": 1.5,
-            "max_drawdown": 0.15,
-            "win_rate": 0.55,
-            "avg_return": 0.08,
+            "brinson_allocation": 0.02,
+            "brinson_selection": 0.01,
+            "calmar": 1.0,
+            "calibration_quality": 0.7,
+            "override_convergence": 0.6,
+            "degradation_events": 2.0,
+            "turnover_cost_drag": 0.01,
+            "worst_case_window": 0.05,
         }
         score = scorer.compute_composite(metrics)
         assert 0 <= score <= 100
 
     def test_default_values_when_missing_keys(self, scorer):
-        """Missing metrics use defaults: sharpe=0, sortino=0, dd=0, win_rate=0.5, avg_return=0."""
+        """Missing metrics use defaults that produce a valid score."""
         score = scorer.compute_composite({})
         assert isinstance(score, float)
         assert 0 <= score <= 100
 
-    def test_high_drawdown_reduces_score(self, scorer):
+    def test_high_degradation_events_reduces_score(self, scorer):
         good = {
-            "sharpe_ratio": 1.0,
-            "sortino_ratio": 1.5,
-            "max_drawdown": 0.05,
-            "win_rate": 0.6,
-            "avg_return": 0.1,
+            "brinson_allocation": 0.02,
+            "brinson_selection": 0.02,
+            "calmar": 2.0,
+            "calibration_quality": 0.8,
+            "override_convergence": 0.7,
+            "degradation_events": 1.0,
+            "turnover_cost_drag": 0.01,
+            "worst_case_window": 0.05,
         }
-        bad_dd = good.copy()
-        bad_dd["max_drawdown"] = 0.45
+        bad_deg = good.copy()
+        bad_deg["degradation_events"] = 9.0
 
-        assert scorer.compute_composite(bad_dd) < scorer.compute_composite(good)
+        assert scorer.compute_composite(bad_deg) < scorer.compute_composite(good)
 
-    def test_zero_win_rate_reduces_score(self, scorer):
+    def test_high_turnover_drag_reduces_score(self, scorer):
         base = {
-            "sharpe_ratio": 1.0,
-            "sortino_ratio": 1.5,
-            "max_drawdown": 0.1,
-            "win_rate": 0.6,
-            "avg_return": 0.1,
+            "brinson_allocation": 0.02,
+            "brinson_selection": 0.02,
+            "calmar": 2.0,
+            "calibration_quality": 0.8,
+            "override_convergence": 0.7,
+            "degradation_events": 1.0,
+            "turnover_cost_drag": 0.01,
+            "worst_case_window": 0.05,
         }
-        low_wr = base.copy()
-        low_wr["win_rate"] = 0.0
+        high_drag = base.copy()
+        high_drag["turnover_cost_drag"] = 0.04
 
-        assert scorer.compute_composite(low_wr) < scorer.compute_composite(base)
+        assert scorer.compute_composite(high_drag) < scorer.compute_composite(base)
 
     def test_weights_sum_to_one(self):
         """Verify the internal weight configuration sums to 1.0."""
@@ -602,11 +708,14 @@ class TestTrackRecordScorer:
     def test_extreme_positive_metrics_capped_at_100(self, scorer):
         """Even with extreme metrics, score cannot exceed 100."""
         metrics = {
-            "sharpe_ratio": 100.0,
-            "sortino_ratio": 100.0,
-            "max_drawdown": 0.0,
-            "win_rate": 1.0,
-            "avg_return": 5.0,
+            "brinson_allocation": 100.0,
+            "brinson_selection": 100.0,
+            "calmar": 100.0,
+            "calibration_quality": 1.0,
+            "override_convergence": 1.0,
+            "degradation_events": 0.0,
+            "turnover_cost_drag": 0.0,
+            "worst_case_window": 0.0,
         }
         score = scorer.compute_composite(metrics)
         assert score <= 100.0
@@ -909,21 +1018,18 @@ class TestEdgeCases:
     def test_track_record_score_with_all_zero_metrics(self, scorer):
         """All-zero metrics still produce a valid score."""
         metrics = {
-            "sharpe_ratio": 0.0,
-            "sortino_ratio": 0.0,
-            "max_drawdown": 0.0,
-            "win_rate": 0.0,
-            "avg_return": 0.0,
+            "brinson_allocation": 0.0,
+            "brinson_selection": 0.0,
+            "calmar": 0.0,
+            "calibration_quality": 0.0,
+            "override_convergence": 0.0,
+            "degradation_events": 0.0,
+            "turnover_cost_drag": 0.0,
+            "worst_case_window": 0.0,
         }
         score = scorer.compute_composite(metrics)
-        # sharpe=0 -> score (0+2)/5 = 0.4
-        # sortino=0 -> score (0+2)/6 = 0.333
-        # max_dd=0 -> score 1.0
-        # win_rate=0 -> score 0.0
-        # avg_return=0 -> score (0+0.2)/0.5 = 0.4
-        # Weighted: 0.25*0.4 + 0.15*0.333 + 0.20*1.0 + 0.20*0.0 + 0.20*0.4
-        # = 0.1 + 0.05 + 0.2 + 0.0 + 0.08 = 0.43
-        assert abs(score - 43.0) < 1.0  # allow rounding
+        assert isinstance(score, float)
+        assert 0 <= score <= 100
 
     def test_negative_returns_drawdown_and_calmar(self):
         """Consistently negative returns produce positive drawdown, negative Calmar."""

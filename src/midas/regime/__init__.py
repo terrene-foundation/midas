@@ -20,17 +20,21 @@ class RegimeState:
     volatility_percentile: float
     ood_score: float
     transition_pressure: float
+    model_disagreement: float
+    drawdown_velocity: float
     timestamp: str
 
 
 class RegimeRenderer:
     """Compute continuous a_t from latent state components."""
 
-    # Weights for a_t computation
-    _W_VOL = 0.35
-    _W_OOD = 0.30
-    _W_TRANSITION = 0.20
+    # Weights for a_t computation (6 contributors per specs/06 S2)
+    _W_VOL = 0.30
+    _W_OOD = 0.25
+    _W_TRANSITION = 0.15
     _W_VARIANCE = 0.15
+    _W_DISAGREEMENT = 0.10
+    _W_DRAWDOWN_VELOCITY = 0.05
 
     def render(
         self,
@@ -38,6 +42,8 @@ class RegimeRenderer:
         volatility: float,
         ood_score: float,
         change_point_prob: float,
+        model_disagreement: float = 0.0,
+        drawdown_velocity: float = 0.0,
         timestamp: str = "",
     ) -> RegimeState:
         """Compute a_t from z_t components."""
@@ -49,6 +55,8 @@ class RegimeRenderer:
         vol_pct = min(max(volatility, 0.0), 1.0)
         ood = min(max(ood_score, 0.0), 1.0)
         trans = min(max(change_point_prob, 0.0), 1.0)
+        disagreement = min(max(model_disagreement, 0.0), 1.0)
+        dd_vel = min(max(drawdown_velocity, 0.0), 1.0)
 
         # Posterior variance as uncertainty signal
         if z_t_posterior:
@@ -63,6 +71,8 @@ class RegimeRenderer:
             + self._W_OOD * ood
             + self._W_TRANSITION * trans
             + self._W_VARIANCE * var_signal
+            + self._W_DISAGREEMENT * disagreement
+            + self._W_DRAWDOWN_VELOCITY * dd_vel
         )
         a_t = min(max(a_t, 0.0), 1.0)
 
@@ -73,6 +83,8 @@ class RegimeRenderer:
             volatility_percentile=vol_pct,
             ood_score=ood,
             transition_pressure=trans,
+            model_disagreement=disagreement,
+            drawdown_velocity=dd_vel,
             timestamp=timestamp,
         )
 

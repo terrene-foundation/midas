@@ -1,6 +1,6 @@
 """Analyst agent — produces structured briefs from decision context.
 
-Generates a 7-section brief with confidence assessment using the frontier
+Generates a 10-section brief with confidence assessment using the frontier
 LLM provider. The brief is the primary output that feeds into the debate
 and composition pipeline.
 """
@@ -15,7 +15,7 @@ logger = structlog.get_logger("midas.agents.analyst")
 class AnalystAgent:
     """Produces structured briefs from decision context.
 
-    The brief contains 7 sections:
+    The brief contains 10 sections:
     1. Situation summary
     2. Evidence assessment (with confidence distribution)
     3. Recommendation
@@ -23,6 +23,9 @@ class AnalystAgent:
     5. What would change my mind
     6. Risk factors
     7. Provenance links
+    8. If approved — expected outcomes and next steps
+    9. If rejected — alternative actions and consequences
+    10. Historical precedent — analogous past decisions and outcomes
     """
 
     BRIEF_SYSTEM_PROMPT = (
@@ -31,7 +34,7 @@ class AnalystAgent:
         "The JSON must have keys: "
         '"sections" (an object with keys: situation_summary, evidence_assessment, '
         "recommendation, counter_evidence, what_would_change_mind, risk_factors, "
-        "provenance_links), "
+        "provenance_links, if_approved, if_rejected, historical_precedent), "
         '"confidence" (a float between 0.0 and 1.0), '
         'and "model_version" (a string).'
     )
@@ -85,6 +88,9 @@ class AnalystAgent:
                     "what_would_change_mind": "N/A",
                     "risk_factors": "Parsing failure indicates uncertain output.",
                     "provenance_links": [],
+                    "if_approved": "N/A",
+                    "if_rejected": "N/A",
+                    "historical_precedent": "N/A",
                 },
                 "confidence": 0.0,
                 "model_version": result.get("model", "unknown"),

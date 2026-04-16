@@ -1061,3 +1061,66 @@ class TestEdgeCases:
         assert result["matched"] is False
         qty_disc = [d for d in result["discrepancies"] if d["field"] == "quantity"]
         assert len(qty_disc) == 1
+
+
+# ===================================================================
+# Rejection Codes
+# ===================================================================
+
+
+class TestRejectionCodes:
+    """Tests for IBKR rejection code classification."""
+
+    def test_code_201_classified_as_insufficient_margin(self):
+        from midas.execution.rejection_codes import RejectionCategory, classify_rejection
+
+        result = classify_rejection(201, "Insufficient margin")
+        assert result.category == RejectionCategory.INSUFFICIENT_MARGIN
+        assert result.ibkr_code == 201
+
+    def test_code_202_classified_as_order_limit_exceeded(self):
+        from midas.execution.rejection_codes import RejectionCategory, classify_rejection
+
+        result = classify_rejection(202, "Order limit exceeded")
+        assert result.category == RejectionCategory.ORDER_LIMIT_EXCEEDED
+        assert result.ibkr_code == 202
+
+    def test_code_399_classified_as_invalid_order(self):
+        from midas.execution.rejection_codes import RejectionCategory, classify_rejection
+
+        result = classify_rejection(399, "Invalid order parameters")
+        assert result.category == RejectionCategory.INVALID_ORDER
+        assert result.ibkr_code == 399
+
+    def test_halted_message_classified_as_instrument_halted(self):
+        from midas.execution.rejection_codes import RejectionCategory, classify_rejection
+
+        result = classify_rejection(999, "Instrument is halted")
+        assert result.category == RejectionCategory.INSTRUMENT_HALTED
+
+    def test_unknown_code_classified_as_unknown(self):
+        from midas.execution.rejection_codes import RejectionCategory, classify_rejection
+
+        result = classify_rejection(12345, "Some unknown error")
+        assert result.category == RejectionCategory.UNKNOWN
+
+    def test_rejection_code_is_frozen_dataclass(self):
+        from midas.execution.rejection_codes import RejectionCode, classify_rejection
+
+        result = classify_rejection(201, "margin")
+        assert isinstance(result, RejectionCode)
+        assert result.description == "margin"
+
+    def test_rejection_category_enum_values(self):
+        from midas.execution.rejection_codes import RejectionCategory
+
+        expected = {
+            "INSUFFICIENT_MARGIN",
+            "ORDER_LIMIT_EXCEEDED",
+            "MARKET_DATA_MISSING",
+            "INSTRUMENT_HALTED",
+            "INVALID_ORDER",
+            "UNKNOWN",
+        }
+        actual = {cat.name for cat in RejectionCategory}
+        assert actual == expected
