@@ -341,7 +341,7 @@ class IBKRAdapter(BaseAdapter):
                 raise AdapterError(
                     self.SOURCE_NAME,
                     "oauth2_refresh",
-                    f"refresh failed: HTTP {response.status_code}: {response.text[:200]}",
+                    f"refresh failed: HTTP {response.status_code}",
                 )
 
             return response.json()
@@ -1185,7 +1185,7 @@ class TWSTFallbackAdapter(BaseAdapter):
             "mid": mid,
             "bid_size": 0.0,
             "ask_size": 0.0,
-            "spread_bps": round(((ask - bid) / mid * 10000) if mid else 0.0, 4),
+            "spread_bps": round(((ask - bid) / mid * 10000) if mid > 1e-10 else 0.0, 4),
             "timestamp": now.isoformat(),
             "source_vintage": f"ibkr_tws:{ticker}:{now.isoformat()}",
         }
