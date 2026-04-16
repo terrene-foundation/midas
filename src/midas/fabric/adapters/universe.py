@@ -253,8 +253,8 @@ class UniverseAdapter(BaseAdapter):
                         "backtest_impact": "",
                     },
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                self._log.warning("universe.changelog_write_failed", ticker=ticker, error=str(exc))
 
         self._log.info(
             "fetch_constituents.complete", index=index_name, count=len(tickers), as_of=as_of_date
@@ -266,5 +266,6 @@ class UniverseAdapter(BaseAdapter):
         try:
             rows = await fabric_db.express.list("universe_changelog", filter={"action": "member"})
             return list({r["ticker"] for r in rows})
-        except Exception:
+        except Exception as exc:
+            self._log.warning("universe.membership_fetch_failed", error=str(exc))
             return []

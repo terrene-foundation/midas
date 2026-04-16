@@ -47,5 +47,6 @@ async def get_changelog(fabric_db: DataFlow, as_of_date: str | None = None) -> l
                 "universe_changelog", filter={"effective_date": as_of_date}
             )
         return await fabric_db.express.list("universe_changelog")
-    except Exception:
+    except Exception as exc:
+        logger.error("changelog.fetch_failed", error=str(exc))
         return []
