@@ -1,6 +1,6 @@
 "use client";
 
-import { useRegimeStore } from "@/stores/regime-store";
+import { useRegimeStore, type Band } from "@/stores/regime-store";
 import { useRegime, usePulse } from "@/lib/queries/usePulse";
 import { useEffect, useMemo } from "react";
 import { PulseSkeleton } from "@/elements/LoadingSkeleton";
@@ -9,9 +9,7 @@ import { PulseElevatedLayout } from "./PulseElevatedLayout";
 import { PulseUrgentLayout } from "./PulseUrgentLayout";
 import { PulseCrisisLayout } from "./PulseCrisisLayout";
 
-type LayoutBand = "calm" | "elevated" | "urgent" | "crisis";
-
-function deriveLayoutBand(a_t: number): LayoutBand {
+function deriveLayoutBand(a_t: number): Band {
   if (a_t < 0.25) return "calm";
   if (a_t < 0.5) return "elevated";
   if (a_t < 0.75) return "urgent";
@@ -39,24 +37,21 @@ export function PulseShell() {
 
   if (isPending) return <PulseSkeleton />;
 
-  // Render all four layouts stacked with opacity transitions.
-  // The active band gets opacity 1; neighbors get a soft fade
-  // so transitions between bands are perceived as drift (500ms).
-  const opacityFor = (band: LayoutBand) => {
+  const BAND_ORDER: Band[] = ["calm", "elevated", "urgent", "crisis"];
+
+  // Active band at full opacity; adjacent bands at 0.15 for soft cross-fade.
+  // The 500ms CSS transition creates a smooth drift effect between bands.
+  const opacityFor = (band: Band) => {
     if (band === primaryBand) return 1;
-    // Partially visible neighbor for soft cross-fade
-    const bandIndex = { calm: 0, elevated: 1, urgent: 2, crisis: 3 }[band];
-    const primaryIndex = { calm: 0, elevated: 1, urgent: 2, crisis: 3 }[
-      primaryBand
-    ];
-    const distance = Math.abs(bandIndex - primaryIndex);
-    if (distance === 1) return 0;
-    return 0;
+    const distance = Math.abs(
+      BAND_ORDER.indexOf(band) - BAND_ORDER.indexOf(primaryBand),
+    );
+    return distance === 1 ? 0.15 : 0;
   };
 
   return (
     <div className="relative">
-      {(["calm", "elevated", "urgent", "crisis"] as const).map((band) => (
+      {BAND_ORDER.map((band) => (
         <div
           key={band}
           className="transition-opacity ease-out"

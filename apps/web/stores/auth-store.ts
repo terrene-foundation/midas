@@ -16,7 +16,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("midas_token", token);
       localStorage.setItem("midas_email", email);
-      document.cookie = `midas_token=${token}; path=/; max-age=${60 * 60 * 24}; SameSite=Strict`;
+      document.cookie = `midas_token=${token}; path=/; max-age=${60 * 60 * 24}; SameSite=Strict; Secure`;
     }
     set({ isAuthenticated: true, token, user: { email } });
   },
