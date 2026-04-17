@@ -44,7 +44,7 @@ export function DebateOverlay() {
             <div
               key={m.id ?? `msg-${i}`}
               className={`rounded-[var(--radius)] p-3 text-sm ${
-                m.severity === "user"
+                ("role" in m && m.role === "user") || m.severity === "user"
                   ? "bg-[var(--bg-elevated)] text-[var(--text-primary)]"
                   : "bg-[var(--bg-hover)] text-[var(--text-secondary)]"
               }`}
