@@ -248,11 +248,33 @@ class KillSwitchProcessLock:
         Returns True if the flow cannot be shortcut (all required steps enforced).
         Returns False if there's a bypass path.
         """
-        # Cannot go from ACTIVE to CLEARED without going through CLEARING_PROCESS
-        # Cannot acknowledge brief without beginning the flow
-        # Cannot skip brief acknowledgment
-        # 60-second dwell is tracked
-        return True  # structural enforcement prevents bypass
+        # Verify structural enforcement of the state machine:
+        # 1. Cannot go from ACTIVE to CLEARED without CLEARING_PROCESS
+        if self._state == KillSwitchState.CLEARED:
+            if not self._brief_acknowledged:
+                return False  # bypassed brief acknowledgment
+            if self._current_step != ClearFlowStep.COMPLETE:
+                return False  # skipped required steps
+
+        # 2. Cannot acknowledge brief without beginning the flow
+        if (
+            self._brief_acknowledged
+            and self._current_step.value < ClearFlowStep.BRIEF_ACKNOWLEDGED.value
+        ):
+            return False  # brief acknowledged without being in the right step
+
+        # 3. Cannot skip brief acknowledgment before completing
+        if self._state == KillSwitchState.CLEARED and not self._brief_read_at:
+            return False  # completed without ever reading the brief
+
+        # 4. Post-clear dwell must be tracked
+        if (
+            self._state == KillSwitchState.CLEARED
+            and self._first_post_clear_dwell_seconds_remaining is None
+        ):
+            return False  # dwell timer was never initialized
+
+        return True
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -263,7 +285,7 @@ class KillSwitchProcessLock:
         return bool(
             brief.z_t_posterior.strip()
             or brief.drawdown_state.strip()
-            or brief.pool_disagreement >= 0
+            or brief.pool_disagreement > 0
             or brief.compliance_events
         )
 

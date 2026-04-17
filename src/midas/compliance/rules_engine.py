@@ -297,7 +297,13 @@ class RulesEngine:
             return lambda ctx, f=field, v=value: ctx.get(f) in (v if isinstance(v, list) else [v])
         elif op == "contains":
             return lambda ctx, f=field, v=value: str(v) in str(ctx.get(f, ""))
-        return lambda ctx: False
+        # Unknown operators default-deny: block the action
+        logger.warning(
+            "rules_engine.unknown_operator",
+            operator=op,
+            field=field,
+        )
+        return lambda ctx: True  # block: unknown operator triggers the rule
 
     @staticmethod
     def _parse_config(config_str: str) -> dict:
@@ -307,3 +313,55 @@ class RulesEngine:
             return json.loads(config_str)
         except (json.JSONDecodeError, TypeError):
             return {}
+
+
+def make_participation_cap_rule(
+    default_cap: float = 0.05,
+) -> ComplianceRule:
+    """Create the exec.participation_cap compliance rule.
+
+    Spec S4.3: order size must not exceed N% of ADV, regime-adaptive.
+    """
+
+    def check_participation_cap(ctx: dict[str, Any]) -> bool:
+        order_size = float(ctx.get("order_size", 0))
+        adv = float(ctx.get("avg_daily_volume", 1))
+        if adv <= 0:
+            return True  # blocked: no ADV data
+        actual = abs(order_size) / adv
+        cap = float(ctx.get("participation_cap", default_cap))
+        return actual > cap
+
+    return ComplianceRule(
+        rule_id="exec.participation_cap",
+        rule_name="Participation Cap",
+        category="execution",
+        severity=RuleSeverity.BLOCK,
+        description="Order size exceeds tier-adjusted ADV participation cap",
+        predicate=check_participation_cap,
+        parameters={"default_cap": default_cap},
+    )
+
+
+def make_cost_budget_rule(
+    annual_budget_bps: float = 50.0,
+) -> ComplianceRule:
+    """Create the env.cost_budget compliance rule.
+
+    Spec S9: expected-cost upper quantile must not exceed remaining budget.
+    """
+
+    def check_cost_budget(ctx: dict[str, Any]) -> bool:
+        expected_cost_bps = float(ctx.get("expected_cost_bps", 0))
+        remaining_budget_bps = float(ctx.get("remaining_budget_bps", annual_budget_bps))
+        return expected_cost_bps > remaining_budget_bps
+
+    return ComplianceRule(
+        rule_id="env.cost_budget",
+        rule_name="Cost Budget",
+        category="envelope",
+        severity=RuleSeverity.BLOCK,
+        description="Expected cost exceeds remaining annual cost budget",
+        predicate=check_cost_budget,
+        parameters={"annual_budget_bps": annual_budget_bps},
+    )
