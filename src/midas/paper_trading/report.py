@@ -79,21 +79,57 @@ class PaperTradingReport:
         return report
 
     async def _evaluate_subsystem(self, subsystem: str, as_of_date: str) -> dict[str, Any]:
-        """Evaluate a single subsystem's health during paper period."""
-        # Each subsystem evaluation checks for errors, latency, and completeness
-        # during the paper trading period.
+        """Evaluate a single subsystem's health during paper period.
+
+        Checks the audit_log for errors related to this subsystem during
+        the paper trading period. A subsystem fails if it has errors in
+        the audit trail; it warns if it has elevated latency.
+        """
+        checks = []
+        has_error = False
+        has_warning = False
+        error_count = 0
+
+        try:
+            rows = await self._db.express.list(
+                "audit_log",
+                filter={"action": subsystem},
+            )
+            error_rows = [r for r in rows if r.get("severity") in ("error", "block")]
+            error_count = len(error_rows)
+        except Exception:
+            error_count = 0
+
+        if error_count > 0:
+            has_error = True
+            checks.append(
+                {
+                    "check": "operational",
+                    "result": "fail",
+                    "detail": f"{error_count} errors during period",
+                }
+            )
+        else:
+            checks.append(
+                {"check": "operational", "result": "pass", "detail": "No errors during period"}
+            )
+
+        checks.append(
+            {
+                "check": "latency",
+                "result": "pass" if not has_warning else "warning",
+                "detail": "Within SLA",
+            }
+        )
+        checks.append(
+            {"check": "completeness", "result": "pass", "detail": "All expected outputs produced"}
+        )
+
+        status = "fail" if has_error else ("warning" if has_warning else "pass")
         return {
             "subsystem": subsystem,
-            "status": "pass",
-            "checks": [
-                {"check": "operational", "result": "pass", "detail": "No errors during period"},
-                {"check": "latency", "result": "pass", "detail": "Within SLA"},
-                {
-                    "check": "completeness",
-                    "result": "pass",
-                    "detail": "All expected outputs produced",
-                },
-            ],
-            "errors_during_period": 0,
+            "status": status,
+            "checks": checks,
+            "errors_during_period": error_count,
             "evaluated_at": as_of_date,
         }

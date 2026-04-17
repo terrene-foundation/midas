@@ -277,32 +277,18 @@ class GoogleTrendsAdapter(BaseAdapter):
         operation = "fetch_trend"
         self._log.info("fetch_trend.start", keyword=keyword)
 
-        now = datetime.now(timezone.utc)
-        db = self._get_db()
-        created_rows: list[dict[str, Any]] = []
-
-        # Google Trends requires a more complex scraping/API approach.
-        # For v1, we use a simplified approach with the daily search interest endpoint.
-        try:
-            client = self._get_client()
-            # This is a simplified placeholder — real implementation would use
-            # pytrends library or the unofficial trends API.
-            response = await client.get(
-                "/trending/rss",
-                params={"geo": "US"},
-            )
-            # The RSS endpoint provides trending searches, not interest over time.
-            # For full implementation, we'd need the pytrends library.
-        except Exception as exc:
-            self._log.warning("fetch_trend.fallback", keyword=keyword, error=str(exc))
-
+        logger.warning(
+            "fetch_trend.not_available",
+            keyword=keyword,
+            reason="pytrends library not installed — returning empty result",
+        )
         await self._write_audit(
             operation=operation,
-            success=True,
-            detail=f"google trends adapter ready for keyword={keyword}, {len(created_rows)} rows",
-            rows_written=len(created_rows),
+            success=False,
+            detail=f"GoogleTrendsAdapter requires pytrends library for keyword={keyword}",
+            rows_written=0,
         )
-        return created_rows
+        return []
 
 
 class TruflationAdapter(BaseAdapter):

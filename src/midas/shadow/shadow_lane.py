@@ -94,17 +94,40 @@ class ShadowLane:
 
         total_trades = len(lane_rows)
         hypothetical_pnl = 0.0
+        winning_trades = 0
 
         for row in lane_rows:
-            # Simple hypothetical P&L: +confidence for buys, -confidence for sells
-            # This is a placeholder heuristic; real implementation would use
-            # price data and position tracking.
             action = row.get("action", "")
-            confidence = float(row.get("confidence", 0.0))
-            if action == "buy":
-                hypothetical_pnl += confidence * 0.01
-            elif action == "sell":
-                hypothetical_pnl -= confidence * 0.01
+            ticker = row.get("ticker", "")
+            decision_date = row.get("decision_date", start_date)
+            entry_price = float(row.get("price_at_decision", 0))
+            size = float(row.get("size", 1.0))
+
+            if entry_price <= 0 or not ticker:
+                continue
+
+            try:
+                price_rows = await self._db.express.list(
+                    "prices",
+                    filter={"instrument": ticker},
+                )
+                exit_prices = [
+                    float(r["close"])
+                    for r in price_rows
+                    if r.get("period_end", "") >= end_date and r.get("close")
+                ]
+                exit_price = exit_prices[0] if exit_prices else entry_price
+            except Exception:
+                exit_price = entry_price
+
+            trade_pnl = (
+                (exit_price - entry_price) * size
+                if action == "buy"
+                else (entry_price - exit_price) * size
+            )
+            hypothetical_pnl += trade_pnl
+            if trade_pnl > 0:
+                winning_trades += 1
 
         return {
             "total_trades": total_trades,

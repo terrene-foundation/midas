@@ -47,15 +47,38 @@ async def filter_sp1500_constituents(
     candidates: list[SP1500Candidate] = []
 
     for ticker in raw_tickers:
-        # Placeholder — in v1.1 these come from fabric queries
-        # price, volume, shares come from fabric prices + fundamentals
+        price = 0.0
+        avg_daily_volume = 0.0
+        shares_outstanding = 0.0
+        has_fundamentals = False
+
+        try:
+            price_rows = await universe_adapter._db.express.list(
+                "prices", filter={"instrument": ticker}
+            )
+            if price_rows:
+                closes = [float(r["close"]) for r in price_rows if r.get("close")]
+                volumes = [float(r.get("volume", 0)) for r in price_rows]
+                price = closes[-1] if closes else 0.0
+                avg_daily_volume = sum(volumes) / len(volumes) if volumes else 0.0
+        except Exception:
+            pass
+
+        try:
+            fund_rows = await universe_adapter._db.express.list(
+                "fundamentals", filter={"ticker": ticker}
+            )
+            has_fundamentals = len(fund_rows) > 0
+        except Exception:
+            pass
+
         candidate = SP1500Candidate(
             ticker=ticker,
-            index_membership="SP500",  # Would come from universe_adapter
-            price=0.0,
-            avg_daily_volume=0.0,
-            shares_outstanding=0.0,
-            has_fundamentals=False,
+            index_membership="SP500",
+            price=price,
+            avg_daily_volume=avg_daily_volume,
+            shares_outstanding=shares_outstanding,
+            has_fundamentals=has_fundamentals,
             has_halt_history=False,
         )
         candidates.append(candidate)

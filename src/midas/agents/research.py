@@ -169,7 +169,7 @@ class ResearchAgent:
             news_rows = await self._db.express.list("news", filter=news_filter or None)
             for row in news_rows:
                 row["source_type"] = "news"
-                row["similarity"] = 0.5  # Placeholder; real impl uses embeddings
+                row["similarity"] = self._keyword_similarity(query, row)
                 documents.append(row)
         except Exception as exc:
             logger.warning("research.news_query_failed", error=str(exc))
@@ -198,3 +198,17 @@ class ResearchAgent:
         if norm_a == 0 or norm_b == 0:
             return 0.0
         return dot / (norm_a * norm_b)
+
+    def _keyword_similarity(self, query: str, row: dict) -> float:
+        """Keyword overlap similarity for text-based rows without embeddings."""
+        query_terms = set(query.lower().split())
+        text_fields = []
+        for key in ("title", "headline", "summary", "body", "content"):
+            val = row.get(key, "")
+            if val:
+                text_fields.append(str(val).lower())
+        combined = " ".join(text_fields)
+        doc_terms = set(combined.split())
+        if not query_terms or not doc_terms:
+            return 0.0
+        return len(query_terms & doc_terms) / len(query_terms | doc_terms)

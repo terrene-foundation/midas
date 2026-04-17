@@ -21,8 +21,19 @@ class NAVComputation:
         self._db = db
         self._log = structlog.get_logger("midas.attribution.nav")
 
-    async def compute_nav(self, as_of_date: str) -> dict:
+    async def compute_nav(
+        self, as_of_date: str, *, cash: float = 0.0, unsettled: float = 0.0
+    ) -> dict:
         """Compute NAV from positions * marks.
+
+        Parameters
+        ----------
+        as_of_date : str
+            Date for NAV computation.
+        cash : float
+            Cash balance (from cash management module or manual entry).
+        unsettled : float
+            Unsettled trades amount.
 
         Returns {nav, positions_value, cash, unsettled}.
         """
@@ -42,10 +53,7 @@ class NAVComputation:
             market_value = pos.get("market_value", 0.0) or 0.0
             positions_value += market_value
 
-        # Cash and unsettled are not yet tracked in separate tables;
-        # they default to 0 until the cash management module is built.
-        cash = 0.0
-        unsettled = 0.0
+        # Cash/unsettled passed in from caller (cash management module or manual entry)
 
         nav = positions_value + cash - unsettled
 

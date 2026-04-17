@@ -217,3 +217,93 @@ class RulesEngine:
                 d["parameters"] = rule.parameters
             result.append(d)
         return result
+
+    async def load_rules_from_db(
+        self,
+        fallback_rules: list[ComplianceRule] | None = None,
+    ) -> int:
+        """Load rules from the compliance_rules DB table.
+
+        Per spec 11 §S3: rules are data, not code. If the DB table has
+        active rules, they are loaded. Otherwise, falls back to the
+        provided Python factory rules.
+
+        Returns the number of rules loaded.
+        """
+        try:
+            rows = await self._db.express.list("compliance_rules")
+            active_rows = [r for r in rows if r.get("is_active", True)]
+        except Exception:
+            active_rows = []
+
+        if active_rows:
+            for row in active_rows:
+                rule = ComplianceRule(
+                    rule_id=row["rule_id"],
+                    rule_name=row["rule_name"],
+                    category=row.get("category", "custom"),
+                    severity=RuleSeverity(row.get("severity", "block")),
+                    description=row.get("description", ""),
+                    predicate=self._make_db_predicate(row),
+                    parameters=self._parse_config(row.get("predicate_config", "")),
+                )
+                self.register_rule(rule)
+            self._log.info(
+                "rules.loaded_from_db",
+                count=len(active_rows),
+            )
+            return len(active_rows)
+
+        if fallback_rules:
+            self.register_rules(fallback_rules)
+            self._log.info(
+                "rules.loaded_from_fallback",
+                count=len(fallback_rules),
+            )
+            return len(fallback_rules)
+
+        return 0
+
+    def _make_db_predicate(self, row: dict) -> Callable[..., bool]:
+        """Create a predicate from DB rule config.
+
+        The predicate_config JSON describes WHAT to check (field name,
+        operator, threshold). This method interprets it — never eval().
+
+        Config shape: {"field": "attention_band", "op": "eq", "value": "crisis"}
+        Supported ops: eq, neq, gt, lt, gte, lte, in, contains.
+        """
+        config = self._parse_config(row.get("predicate_config", ""))
+        if not config:
+            return lambda ctx: False
+
+        field = config.get("field", "")
+        op = config.get("op", "eq")
+        value = config.get("value")
+
+        if op == "eq":
+            return lambda ctx, f=field, v=value: str(ctx.get(f, "")).lower() == str(v).lower()
+        elif op == "neq":
+            return lambda ctx, f=field, v=value: str(ctx.get(f, "")).lower() != str(v).lower()
+        elif op == "gt":
+            return lambda ctx, f=field, v=value: float(ctx.get(f, 0)) > float(v)
+        elif op == "lt":
+            return lambda ctx, f=field, v=value: float(ctx.get(f, 0)) < float(v)
+        elif op == "gte":
+            return lambda ctx, f=field, v=value: float(ctx.get(f, 0)) >= float(v)
+        elif op == "lte":
+            return lambda ctx, f=field, v=value: float(ctx.get(f, 0)) <= float(v)
+        elif op == "in":
+            return lambda ctx, f=field, v=value: ctx.get(f) in (v if isinstance(v, list) else [v])
+        elif op == "contains":
+            return lambda ctx, f=field, v=value: str(v) in str(ctx.get(f, ""))
+        return lambda ctx: False
+
+    @staticmethod
+    def _parse_config(config_str: str) -> dict:
+        if not config_str:
+            return {}
+        try:
+            return json.loads(config_str)
+        except (json.JSONDecodeError, TypeError):
+            return {}

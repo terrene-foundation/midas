@@ -53,7 +53,7 @@ class DataFlowFabricReader(FabricReader):
         instrument: str,
         as_of: date,
         *,
-        lookback_days: int = 30,  # TODO (T-00-01): implement lookback window
+        lookback_days: int = 30,
     ) -> list[PriceRecord]:
         ctx = PITQueryContext(as_of_date=as_of)
         rows = await self._df.express.list(
@@ -64,6 +64,15 @@ class DataFlowFabricReader(FabricReader):
             },
             order_by="period_end",
         )
+        if lookback_days and rows:
+            from datetime import timedelta
+
+            cutoff = as_of - timedelta(days=lookback_days)
+            rows = [
+                r
+                for r in rows
+                if date.fromisoformat(r.get("period_end", as_of.isoformat())) >= cutoff
+            ]
         return [self._row_to_price(r) for r in rows]
 
     async def read_fundamentals(

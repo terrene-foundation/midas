@@ -412,6 +412,20 @@ def _register_models(db: DataFlow) -> None:
         last_rotated_at: str = ""
         active: bool = True
 
+    # -- 25. compliance_rules ------------------------------------------------
+    @db.model
+    class compliance_rules:
+        id: int
+        rule_id: str
+        rule_name: str
+        category: str  # block | escalate | warn
+        severity: str
+        description: str
+        predicate_config: str = ""  # JSON config, NOT eval-able code
+        is_active: bool = True
+        created_at: str = ""
+        updated_at: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -443,6 +457,7 @@ FABRIC_TABLES: list[str] = [
     "cost_attribution",
     "sweep_history",
     "credentials",
+    "compliance_rules",
 ]
 
 

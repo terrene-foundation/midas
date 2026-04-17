@@ -110,8 +110,11 @@ class ModelRegistry:
                 filter={"model_family": model_family, "promotion_status": "champion"},
             )
             for row in rows:
-                # Demote existing champion — in v1 we just register a new version
-                pass
+                await self._db.express.update(
+                    "model_registry",
+                    str(row["id"]),
+                    {"promotion_status": "challenger"},
+                )
             return True
         except Exception as exc:
             logger.error("registry.promote_failed", family=model_family, error=str(exc))

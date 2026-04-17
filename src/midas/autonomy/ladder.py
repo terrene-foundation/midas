@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from enum import IntEnum
 from typing import Any
 
+import numpy as np
 import structlog
 from dataflow import DataFlow
 
@@ -283,6 +284,11 @@ class AutonomyLadder:
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        # L2→L3 and L3→L4: compute 12-month bootstrap CI from performance data
+        if from_level >= AutonomyLevel.L2 and to_level >= AutonomyLevel.L3:
+            bootstrap_result = self._compute_promotion_bootstrap(evidence)
+            evidence.update(bootstrap_result)
+
         for req_id, req_desc in requirements:
             if evidence.get(req_id, False):
                 requirements_met.append(req_desc)
@@ -306,3 +312,58 @@ class AutonomyLadder:
             "requirements_met": requirements_met,
             "requirements_failed": requirements_failed,
         }
+
+    BOOTSTRAP_SAMPLES = 1000
+    BOOTSTRAP_SEED = 42
+    SHARPE_FLOOR = 0.5
+    TWELVE_MONTH_DAYS = 252
+
+    def _compute_promotion_bootstrap(self, evidence: dict) -> dict:
+        """Compute 12-month bootstrap CI for promotion eligibility.
+
+        Per spec 08 §S4: L3/L4 promotion requires 12-month primary window
+        with bootstrap CI lower bound exceeding floor. 3-month window is
+        context signal only, NOT a promotion trigger.
+        """
+        monthly_returns = evidence.get("monthly_returns", [])
+        result: dict[str, Any] = {
+            "bootstrap_n": self.BOOTSTRAP_SAMPLES,
+            "twelve_month_days_required": self.TWELVE_MONTH_DAYS,
+        }
+
+        if len(monthly_returns) < 12:
+            result["twelve_month_window"] = False
+            result["bootstrap_sharpe_lower"] = False
+            result["bootstrap_ci"] = None
+            result["months_available"] = len(monthly_returns)
+            return result
+
+        returns = np.array(monthly_returns[-12:], dtype=float)
+        if np.std(returns) == 0:
+            result["twelve_month_window"] = True
+            result["bootstrap_sharpe_lower"] = False
+            result["bootstrap_ci"] = {"point": 0.0, "ci_lower": 0.0, "ci_upper": 0.0}
+            result["months_available"] = len(returns)
+            return result
+
+        rng = np.random.default_rng(self.BOOTSTRAP_SEED)
+        sharpe_samples = np.empty(self.BOOTSTRAP_SAMPLES)
+        for i in range(self.BOOTSTRAP_SAMPLES):
+            sample = rng.choice(returns, size=len(returns), replace=True)
+            std = np.std(sample, ddof=1)
+            sharpe_samples[i] = np.mean(sample) / std if std > 0 else 0.0
+
+        ci_lower = float(np.percentile(sharpe_samples, 2.5))
+        ci_upper = float(np.percentile(sharpe_samples, 97.5))
+        point_sharpe = float(np.mean(returns) / np.std(returns, ddof=1))
+
+        result["twelve_month_window"] = len(monthly_returns) >= 12
+        result["bootstrap_sharpe_lower"] = ci_lower > self.SHARPE_FLOOR
+        result["bootstrap_ci"] = {
+            "point": point_sharpe,
+            "ci_lower": ci_lower,
+            "ci_upper": ci_upper,
+            "floor": self.SHARPE_FLOOR,
+        }
+        result["months_available"] = len(monthly_returns)
+        return result

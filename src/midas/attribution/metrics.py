@@ -6,6 +6,8 @@ Annualization uses 252 trading days per year by default.
 Ref: M16 — Risk metrics
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 
 TRADING_DAYS_PER_YEAR = 252
@@ -384,3 +386,130 @@ class RiskMetrics:
         if beta == 0.0:
             return 0.0
         return (portfolio_return - risk_free_rate) / beta
+
+
+@dataclass
+class DistributionResult:
+    """A metric with bootstrapped confidence interval."""
+
+    point: float
+    ci_lower: float
+    ci_upper: float
+    n_bootstrap: int
+
+    def contains(self, value: float) -> bool:
+        return self.ci_lower <= value <= self.ci_upper
+
+
+class BootstrapMetrics:
+    """Performance metrics with bootstrap confidence intervals.
+
+    Per spec 12 §S1: all metrics computed as distributions with
+    bootstrapped confidence intervals, not point estimates.
+    """
+
+    DEFAULT_N_BOOTSTRAP = 1000
+    DEFAULT_SEED = 42
+
+    @staticmethod
+    def _resample_metric(
+        returns: np.ndarray,
+        metric_fn,
+        n_bootstrap: int = 1000,
+        seed: int = 42,
+        ci: float = 0.95,
+        **metric_kwargs,
+    ) -> DistributionResult:
+        rng = np.random.default_rng(seed)
+        samples = np.empty(n_bootstrap)
+        for i in range(n_bootstrap):
+            s = rng.choice(returns, size=len(returns), replace=True)
+            samples[i] = metric_fn(s, **metric_kwargs)
+        alpha = (1 - ci) / 2
+        return DistributionResult(
+            point=float(metric_fn(returns, **metric_kwargs)),
+            ci_lower=float(np.percentile(samples, alpha * 100)),
+            ci_upper=float(np.percentile(samples, (1 - alpha) * 100)),
+            n_bootstrap=n_bootstrap,
+        )
+
+    @staticmethod
+    def sharpe_ratio(
+        returns: np.ndarray,
+        risk_free_rate: float = 0.0,
+        n_bootstrap: int = 1000,
+        seed: int = 42,
+        ci: float = 0.95,
+    ) -> DistributionResult:
+        def _sharpe(r):
+            std = np.std(r, ddof=1)
+            return (np.mean(r) - risk_free_rate) / std * np.sqrt(252) if std > 0 else 0.0
+
+        return BootstrapMetrics._resample_metric(returns, _sharpe, n_bootstrap, seed, ci)
+
+    @staticmethod
+    def sortino_ratio(
+        returns: np.ndarray,
+        risk_free_rate: float = 0.0,
+        n_bootstrap: int = 1000,
+        seed: int = 42,
+        ci: float = 0.95,
+    ) -> DistributionResult:
+        def _sortino(r):
+            downside = r[r < risk_free_rate] - risk_free_rate
+            ds_std = np.sqrt(np.mean(downside**2)) if len(downside) > 0 else 0.0
+            return (np.mean(r) - risk_free_rate) / ds_std * np.sqrt(252) if ds_std > 0 else 0.0
+
+        return BootstrapMetrics._resample_metric(returns, _sortino, n_bootstrap, seed, ci)
+
+    @staticmethod
+    def max_drawdown(
+        returns: np.ndarray,
+        n_bootstrap: int = 1000,
+        seed: int = 42,
+        ci: float = 0.95,
+    ) -> DistributionResult:
+        def _mdd(r):
+            cum = np.cumprod(1 + r)
+            peak = np.maximum.accumulate(cum)
+            dd = (peak - cum) / peak
+            return float(np.max(dd)) if len(dd) > 0 else 0.0
+
+        return BootstrapMetrics._resample_metric(returns, _mdd, n_bootstrap, seed, ci)
+
+    @staticmethod
+    def information_ratio(
+        returns: np.ndarray,
+        benchmark_returns: np.ndarray,
+        n_bootstrap: int = 1000,
+        seed: int = 42,
+        ci: float = 0.95,
+    ) -> DistributionResult:
+        def _ir(r, benchmark=benchmark_returns):
+            active = r[: len(benchmark)] - benchmark[: len(r)]
+            std = np.std(active, ddof=1)
+            return np.mean(active) / std * np.sqrt(252) if std > 0 else 0.0
+
+        return BootstrapMetrics._resample_metric(returns, _ir, n_bootstrap, seed, ci)
+
+    @staticmethod
+    def jensens_alpha(
+        returns: np.ndarray,
+        market_returns: np.ndarray,
+        risk_free_rate: float = 0.0,
+        n_bootstrap: int = 1000,
+        seed: int = 42,
+        ci: float = 0.95,
+    ) -> DistributionResult:
+        def _alpha(r, market=market_returns):
+            m = market[: len(r)]
+            r = r[: len(m)]
+            excess_m = m - risk_free_rate
+            excess_r = r - risk_free_rate
+            var_m = np.var(excess_m, ddof=1)
+            if var_m == 0:
+                return 0.0
+            beta = np.cov(excess_r, excess_m, ddof=1)[0, 1] / var_m
+            return float(np.mean(excess_r) - beta * np.mean(excess_m))
+
+        return BootstrapMetrics._resample_metric(returns, _alpha, n_bootstrap, seed, ci)
