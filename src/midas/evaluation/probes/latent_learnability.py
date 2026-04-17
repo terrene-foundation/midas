@@ -10,9 +10,10 @@ Ref: T-00-02
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -134,8 +135,11 @@ class LatentLearnabilityProbe:
     ALPHA = 0.05  # two-sided test vs null
     N_PERMUTATIONS = 200  # Monte Carlo for null distribution
 
-    def __init__(self, reader: FabricReader) -> None:
+    DEFAULT_MARKET_PROXY = "SPY"
+
+    def __init__(self, reader: FabricReader, *, market_proxy: str = DEFAULT_MARKET_PROXY) -> None:
         self._reader = reader
+        self._market_proxy = market_proxy
 
     async def run(
         self,
@@ -186,9 +190,10 @@ class LatentLearnabilityProbe:
         if realized_returns_override is not None:
             forward_returns = np.array(realized_returns_override)
         else:
-            # TODO (T-00-02): wire fabric price read — placeholder returns NaN
             forward_returns = np.array(
-                [self._realised_return_for_state(r, forward_horizon) for r in z_records]
+                await asyncio.gather(
+                    *(self._realised_return_for_state(r, forward_horizon) for r in z_records)
+                )
             )
 
         valid_mask = ~np.isnan(forward_returns) & ~np.any(np.isnan(z_matrix), axis=1)
@@ -253,19 +258,42 @@ class LatentLearnabilityProbe:
             run_at=datetime.now(),
         )
 
-    def _realised_return_for_state(
+    async def _realised_return_for_state(
         self,
-        _state: LatentStateRecord,
-        _horizon: int,
+        state: LatentStateRecord,
+        horizon: int,
     ) -> float:
-        """Placeholder: compute realised forward return from the fabric.
+        """Compute realised forward return from the fabric.
 
-        In the full implementation this queries the fabric for the price at
-        (period_end) and price at (period_end + horizon days).
-        Here we return a NaN sentinel that gets filtered.
+        Uses SPY (or configured market proxy) as the market-level return
+        benchmark for z_t learnability. Queries with PIT discipline:
+        as_of = period_end + 1 day to get the closing price active at
+        period_end.
         """
-        # TODO (T-00-01): wire fabric price read once adapters are live
-        return float("nan")
+        start_date = state.pit.period_end
+        end_date = start_date + timedelta(days=horizon)
+        try:
+            start_records = await self._reader.read_price(
+                self._market_proxy,
+                start_date + timedelta(days=1),
+                lookback_days=horizon + 5,
+            )
+            end_records = await self._reader.read_price(
+                self._market_proxy,
+                end_date + timedelta(days=1),
+                lookback_days=horizon + 5,
+            )
+        except Exception:
+            return float("nan")
+        if not start_records or not end_records:
+            return float("nan")
+        start_rec = start_records[-1]
+        end_rec = end_records[-1]
+        start_close = start_rec.close
+        end_close = end_rec.close
+        if start_close is None or end_close is None or start_close <= 0 or end_close <= 0:
+            return float("nan")
+        return (end_close - start_close) / start_close
 
     def _compute_mi(self, z: np.ndarray, r: np.ndarray, n_bins: int = 10) -> float:
         """Compute empirical mutual information between z columns and returns.

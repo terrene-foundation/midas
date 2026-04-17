@@ -24,7 +24,7 @@ def create_escalation_rules() -> list[ComplianceRule]:
             severity=RuleSeverity.ESCALATE,
             description="Actions in URGENT band must be escalated when autonomy < L3",
             predicate=lambda ctx: (
-                ctx.get("attention_band", "") == "urgent"
+                ctx.get("attention_band", "").lower() == "urgent"
                 and ctx.get("current_autonomy_level", 0) < 3
             ),
         )
@@ -38,7 +38,7 @@ def create_escalation_rules() -> list[ComplianceRule]:
             category="escalate",
             severity=RuleSeverity.ESCALATE,
             description="Actions in CRISIS band must always be escalated",
-            predicate=lambda ctx: ctx.get("attention_band", "") == "crisis",
+            predicate=lambda ctx: ctx.get("attention_band", "").lower() == "crisis",
         )
     )
 

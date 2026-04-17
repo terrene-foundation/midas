@@ -7,6 +7,7 @@ Ref: M15 — Rate limiter
 """
 
 import time
+from collections import deque
 
 import structlog
 
@@ -18,13 +19,23 @@ class RateLimiter:
 
     def __init__(self, budget_per_minute: int = 50):
         self._budget = budget_per_minute
-        self._timestamps: list[float] = []
+        # deque with maxlen provides hard cap on memory regardless of call pattern
+        self._timestamps: deque[float] = deque(maxlen=budget_per_minute)
         self._log = structlog.get_logger("midas.execution.rate_limiter")
 
     def _prune_old_timestamps(self) -> None:
-        """Remove timestamps older than 60 seconds (outside the window)."""
+        """Remove timestamps older than 60 seconds (outside the window).
+
+        With deque(maxlen=budget), old entries are auto-evicted on insert when
+        the deque is full. This method handles the case where the deque is not
+        full but entries have aged out (quiet period between calls).
+        """
         cutoff = time.monotonic() - 60.0
-        self._timestamps = [t for t in self._timestamps if t > cutoff]
+        # Rebuild deque keeping only recent entries (deque doesn't support in-place filter)
+        self._timestamps = deque(
+            (t for t in self._timestamps if t > cutoff),
+            maxlen=self._budget,
+        )
 
     async def acquire(self, priority: str = "normal") -> bool:
         """Acquire rate limit slot. Returns True if allowed."""
