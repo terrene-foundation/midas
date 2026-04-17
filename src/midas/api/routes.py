@@ -10,6 +10,7 @@ Ref: specs/09 S5-9
 import json
 import logging
 import secrets
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -1082,7 +1083,9 @@ class ComplianceRouter:
     def __init__(self) -> None:
         self.router = APIRouter()
         self.router.add_api_route("/rules", self.list_rules, methods=["GET"])
+        self.router.add_api_route("/rules", self.create_rule, methods=["POST"])
         self.router.add_api_route("/rules/{rule_id}", self.get_rule, methods=["GET"])
+        self.router.add_api_route("/rules/{rule_id}", self.update_rule, methods=["PUT"])
         self.router.add_api_route("/evaluations", self.list_evaluations, methods=["GET"])
 
     async def list_rules(self) -> dict[str, Any]:
@@ -1110,6 +1113,64 @@ class ComplianceRouter:
         except Exception as exc:
             logger.error("compliance.list_rules.failed", extra={"error": str(exc)})
             return {"rules": [], "total": 0}
+
+    async def create_rule(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Create a new compliance rule (admin endpoint).
+
+        Ref: specs/11 §S3 "Rules are data, not code"
+        """
+        logger.info("compliance.create_rule.start")
+        required = ["rule_id", "rule_name", "category", "severity"]
+        for field in required:
+            if not body.get(field):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Missing required field: {field}",
+                )
+
+        valid_categories = {"block", "escalate", "warn"}
+        if body["category"] not in valid_categories:
+            raise HTTPException(
+                status_code=400,
+                detail=f"category must be one of: {', '.join(valid_categories)}",
+            )
+        valid_severities = {"pass", "warn", "escalate", "block"}
+        if body["severity"].lower() not in valid_severities:
+            raise HTTPException(
+                status_code=400,
+                detail=f"severity must be one of: {', '.join(valid_severities)}",
+            )
+
+        try:
+            db = await _get_db()
+            if db is None:
+                raise HTTPException(status_code=503, detail="Database unavailable")
+            now = datetime.now(timezone.utc).isoformat()
+            rule_id = await db.express.create(
+                "compliance_rules",
+                {
+                    "rule_id": body["rule_id"],
+                    "rule_name": body["rule_name"],
+                    "category": body["category"],
+                    "severity": body["severity"].lower(),
+                    "description": body.get("description", ""),
+                    "predicate_config": body.get("predicate_config", ""),
+                    "is_active": body.get("is_active", True),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            logger.info("compliance.rule_created", rule_id=body["rule_id"])
+            return {
+                "id": rule_id,
+                "rule_id": body["rule_id"],
+                "status": "created",
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("compliance.create_rule.failed", extra={"error": str(exc)})
+            raise HTTPException(status_code=500, detail="Failed to create rule")
 
     async def get_rule(self, rule_id: str) -> dict[str, Any]:
         """Get a specific rule's details."""
@@ -1151,6 +1212,60 @@ class ComplianceRouter:
                 "description": "",
                 "is_active": True,
             }
+
+    async def update_rule(self, rule_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Update an existing compliance rule (admin endpoint).
+
+        Ref: specs/11 §S3 "Rules are data, not code"
+        """
+        logger.info("compliance.update_rule.start", extra={"rule_id": rule_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                raise HTTPException(status_code=503, detail="Database unavailable")
+
+            rows = await db.express.list("compliance_rules", filter={"rule_id": rule_id})
+            if not rows:
+                raise HTTPException(status_code=404, detail="Rule not found")
+
+            existing = rows[0]
+            updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+
+            for field in (
+                "rule_name",
+                "category",
+                "severity",
+                "description",
+                "predicate_config",
+                "is_active",
+            ):
+                if field in body:
+                    val = body[field]
+                    if field == "severity":
+                        val = val.lower()
+                        valid = {"pass", "warn", "escalate", "block"}
+                        if val not in valid:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"severity must be one of: {', '.join(valid)}",
+                            )
+                    if field == "category":
+                        valid = {"block", "escalate", "warn"}
+                        if val not in valid:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"category must be one of: {', '.join(valid)}",
+                            )
+                    updates[field] = val
+
+            await db.express.update("compliance_rules", str(existing["id"]), updates)
+            logger.info("compliance.rule_updated", rule_id=rule_id)
+            return {"rule_id": rule_id, "status": "updated"}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("compliance.update_rule.failed", extra={"error": str(exc)})
+            raise HTTPException(status_code=500, detail="Failed to update rule")
 
     async def list_evaluations(
         self,
