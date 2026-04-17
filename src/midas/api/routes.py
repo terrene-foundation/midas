@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from midas.agents.tools import DebateTools
 from midas.compliance.kill_switch import KillSwitch
 from midas.fabric.engine import get_fabric
 from midas.regime import RegimeRenderer
@@ -427,6 +428,16 @@ class DebateRouter:
         self.router.add_api_route(
             "/threads/{thread_id}/tool-call", self.invoke_tool, methods=["POST"]
         )
+        self._debate_tools: DebateTools | None = None
+
+    async def _get_debate_tools(self) -> DebateTools | None:
+        """Get or create DebateTools instance (lazy init)."""
+        if self._debate_tools is None:
+            db = await _get_db()
+            if db is None:
+                return None
+            self._debate_tools = DebateTools(db)
+        return self._debate_tools
 
     async def list_threads(self) -> dict[str, Any]:
         """List debate threads."""
@@ -528,10 +539,55 @@ class DebateRouter:
             return {"message_id": "", "thread_id": thread_id, "content": content}
 
     async def invoke_tool(self, thread_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Invoke a debate tool within the thread."""
+        """Invoke a debate tool within the thread.
+
+        Per spec 07 S3.3: 10 tools for debate. Tools are pure data
+        operations; the LLM decides how to use returned data.
+        """
         tool_name = body.get("tool_name", "")
         logger.info("debate.invoke_tool", extra={"thread_id": thread_id, "tool_name": tool_name})
-        return {"tool_result": {"tool_name": tool_name}, "thread_id": thread_id}
+
+        tools = await self._get_debate_tools()
+        if tools is None:
+            # Return empty result when DB is unavailable (e.g., test environment)
+            logger.warning("debate.invoke_tool.db_unavailable", tool_name=tool_name)
+            return {"tool_result": {}, "thread_id": thread_id}
+
+        # Map tool_name -> (method, param_keys)
+        TOOL_METHODS = {
+            "query_fabric": ("query_fabric", ["table", "filter"]),
+            "query_head": ("query_head", ["head_name", "z_t"]),
+            "retrieve_analogues": ("retrieve_analogue", ["situation_hash"]),
+            "query_calibration": ("query_calibration", ["head_name"]),
+            "surface_override_pattern": ("surface_override_pattern", ["user_id"]),
+            "propose_alternative_allocation": (
+                "propose_alternative_allocation",
+                ["current_weights", "constraint_changes"],
+            ),
+            "recompute_with_constraint": ("recompute_with_constraint", ["scenario", "constraint"]),
+            "backtest_scenario": ("backtest_scenario", ["weights", "period"]),
+            "update_decision": ("update_decision", ["decision_id", "updates"]),
+            "generate_counterfactual": ("generate_counterfactual", ["decision_id"]),
+        }
+
+        if tool_name not in TOOL_METHODS:
+            raise HTTPException(status_code=400, detail=f"Unknown tool: {tool_name}")
+
+        method_name, param_keys = TOOL_METHODS[tool_name]
+        params = {k: body.get(k) for k in param_keys}
+
+        try:
+            method = getattr(tools, method_name)
+            result = await method(**params)
+            return {"tool_result": result, "thread_id": thread_id}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(
+                "debate.invoke_tool.failed",
+                extra={"thread_id": thread_id, "tool_name": tool_name, "error": str(exc)},
+            )
+            raise HTTPException(status_code=500, detail=f"Tool invocation failed: {exc}")
 
 
 class PortfolioRouter:
