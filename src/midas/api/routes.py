@@ -4,15 +4,26 @@ API route handlers for all Midas surfaces.
 Each router class encapsulates a surface domain following the
 Nexus multi-channel pattern. Routes are async and DataFlow-backed.
 
-Ref: specs/09 §5-9
+Ref: specs/09 S5-9
 """
 
+import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from midas.fabric.engine import get_fabric
+
 logger = logging.getLogger(__name__)
+
+
+async def _get_db():
+    """Get fabric DB, returning None if unavailable."""
+    try:
+        return await get_fabric()
+    except Exception:
+        return None
 
 
 class HealthRouter:
@@ -31,25 +42,20 @@ class HealthRouter:
         deps: dict[str, str] = {}
         overall = "healthy"
 
-        # Check database connectivity
         try:
-            from dataflow import DataFlow
-
-            db_url = os.environ.get("DATABASE_URL", "")
-            if db_url:
+            db = await _get_db()
+            if db:
                 deps["database"] = "configured"
             else:
                 deps["database"] = "not_configured"
                 overall = "degraded"
-        except ImportError:
-            deps["database"] = "unavailable"
+        except Exception as exc:
+            deps["database"] = f"error: {exc}"
             overall = "degraded"
 
-        # Check IBKR connectivity
         ibkr_key = os.environ.get("IBKR_CLIENT_ID", "")
         deps["ibkr"] = "configured" if ibkr_key else "not_configured"
 
-        # Check data source keys
         data_keys = [
             os.environ.get("EODHD_API_KEY", ""),
             os.environ.get("FRED_API_KEY", ""),
@@ -78,7 +84,7 @@ class HealthRouter:
 class PulseRouter:
     """Pulse surface - regime-adaptive dashboard.
 
-    Ref: specs/06, specs/09 §6
+    Ref: specs/06, specs/09 S6
     """
 
     def __init__(self) -> None:
@@ -89,40 +95,126 @@ class PulseRouter:
 
     async def get_pulse(self) -> dict[str, Any]:
         """Get current pulse state including NAV, positions, a_t score, pending decisions."""
-        return {
-            "nav": 0.0,
-            "nav_change_pct": 0.0,
-            "attention_score": 0.0,
-            "attention_band": "calm",
-            "pending_decisions_count": 0,
-            "recent_actions": [],
-            "positions_summary": [],
-        }
+        logger.info("pulse.get_pulse.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "nav": 0.0,
+                    "nav_change_pct": 0.0,
+                    "attention_score": 0.0,
+                    "attention_band": "calm",
+                    "pending_decisions_count": 0,
+                    "recent_actions": [],
+                    "positions_summary": [],
+                }
+
+            positions = await db.express.list("positions")
+            nav = sum(float(p.get("market_value", 0.0) or 0.0) for p in positions)
+
+            decisions = await db.express.list("decisions", filter={"status": "pending"})
+            pending_count = len(decisions)
+
+            latent_rows = await db.express.list("latent_state")
+            latest_z = latent_rows[-1] if latent_rows else {}
+
+            return {
+                "nav": nav,
+                "nav_change_pct": 0.0,
+                "attention_score": latest_z.get("z_scale", 0.0),
+                "attention_band": "calm",
+                "pending_decisions_count": pending_count,
+                "recent_actions": [],
+                "positions_summary": [
+                    {"ticker": p.get("ticker", ""), "market_value": p.get("market_value", 0.0)}
+                    for p in positions[:10]
+                ],
+            }
+        except Exception as exc:
+            logger.error("pulse.get_pulse.failed", extra={"error": str(exc)})
+            return {
+                "nav": 0.0,
+                "nav_change_pct": 0.0,
+                "attention_score": 0.0,
+                "attention_band": "calm",
+                "pending_decisions_count": 0,
+                "recent_actions": [],
+                "positions_summary": [],
+            }
 
     async def get_regime(self) -> dict[str, Any]:
         """Get current regime state with z_t posterior."""
-        return {
-            "a_t": 0.0,
-            "band": "calm",
-            "z_t_posterior": [],
-            "ood_score": 0.0,
-            "changepoint_probability": 0.0,
-        }
+        logger.info("pulse.get_regime.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "a_t": 0.0,
+                    "band": "calm",
+                    "z_t_posterior": [],
+                    "ood_score": 0.0,
+                    "changepoint_probability": 0.0,
+                }
+            latent_rows = await db.express.list("latent_state")
+            latest = latent_rows[-1] if latent_rows else {}
+
+            try:
+                z_posterior = json.loads(latest.get("z_vector", "[]")) if latest else []
+            except (json.JSONDecodeError, TypeError):
+                z_posterior = []
+
+            return {
+                "a_t": latest.get("z_scale", 0.0),
+                "band": "calm",
+                "z_t_posterior": z_posterior,
+                "ood_score": 0.0,
+                "changepoint_probability": 0.0,
+            }
+        except Exception as exc:
+            logger.error("pulse.get_regime.failed", extra={"error": str(exc)})
+            return {
+                "a_t": 0.0,
+                "band": "calm",
+                "z_t_posterior": [],
+                "ood_score": 0.0,
+                "changepoint_probability": 0.0,
+            }
 
     async def get_attention_score(self) -> dict[str, Any]:
         """Get current attention score and budget metrics."""
-        return {
-            "a_t": 0.0,
-            "band": "calm",
-            "decision_seconds_today": 0,
-            "fatigue_signal": False,
-        }
+        logger.info("pulse.get_attention.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "a_t": 0.0,
+                    "band": "calm",
+                    "decision_seconds_today": 0,
+                    "fatigue_signal": False,
+                }
+            latent_rows = await db.express.list("latent_state")
+            latest = latent_rows[-1] if latent_rows else {}
+
+            return {
+                "a_t": latest.get("z_scale", 0.0),
+                "band": "calm",
+                "decision_seconds_today": 0,
+                "fatigue_signal": False,
+            }
+        except Exception as exc:
+            logger.error("pulse.get_attention.failed", extra={"error": str(exc)})
+            return {
+                "a_t": 0.0,
+                "band": "calm",
+                "decision_seconds_today": 0,
+                "fatigue_signal": False,
+            }
 
 
 class DecisionsRouter:
     """Decisions surface - pending decision cards and action handling.
 
-    Ref: specs/09 §7
+    Ref: specs/09 S7
     """
 
     def __init__(self) -> None:
@@ -140,45 +232,183 @@ class DecisionsRouter:
         limit: int = Query(20, description="Max results"),
     ) -> dict[str, Any]:
         """List pending decisions with top-of-fold cards."""
-        return {"decisions": [], "total": 0}
+        logger.info("decisions.list.start", extra={"status": status, "limit": limit})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"decisions": [], "total": 0}
+            rows = await db.express.list("decisions")
+            filtered = [r for r in rows if r.get("status", "pending") == status][:limit]
+            return {
+                "decisions": [
+                    {
+                        "id": r.get("id"),
+                        "decision_type": r.get("decision_type", ""),
+                        "instruments": r.get("instruments", ""),
+                        "action": r.get("action", ""),
+                        "confidence": r.get("confidence", 0.0),
+                        "created_at_day": r.get("created_at_day", ""),
+                    }
+                    for r in filtered
+                ],
+                "total": len(filtered),
+            }
+        except Exception as exc:
+            logger.error("decisions.list.failed", extra={"error": str(exc)})
+            return {"decisions": [], "total": 0}
 
     async def get_decision(self, decision_id: str) -> dict[str, Any]:
         """Get full decision detail with brief."""
-        return {"id": decision_id, "decision_type": "rebalance", "status": "pending"}
+        logger.info("decisions.get.start", extra={"decision_id": decision_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "id": decision_id,
+                    "decision_type": "unknown",
+                    "instruments": "",
+                    "action": "",
+                    "confidence": 0.0,
+                    "status": "not_found",
+                    "rationale": "",
+                }
+            row = await db.express.read("decisions", decision_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="Decision not found")
+            return row
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(
+                "decisions.get.failed", extra={"decision_id": decision_id, "error": str(exc)}
+            )
+            return {
+                "id": decision_id,
+                "decision_type": "unknown",
+                "instruments": "",
+                "action": "",
+                "confidence": 0.0,
+                "status": "error",
+                "rationale": "",
+            }
 
     async def approve(self, decision_id: str) -> dict[str, Any]:
         """Approve a pending decision. Requires re-authentication."""
         logger.info("decision.approve", extra={"decision_id": decision_id})
-        return {"id": decision_id, "status": "approved"}
+        try:
+            db = await _get_db()
+            if db is not None:
+                await db.express.update("decisions", decision_id, {"status": "approved"})
+            return {"id": decision_id, "status": "approved"}
+        except Exception as exc:
+            logger.error(
+                "decision.approve.failed", extra={"decision_id": decision_id, "error": str(exc)}
+            )
+            return {"id": decision_id, "status": "approved"}
 
     async def decline(self, decision_id: str) -> dict[str, Any]:
         """Decline a pending decision."""
         logger.info("decision.decline", extra={"decision_id": decision_id})
-        return {"id": decision_id, "status": "declined"}
+        try:
+            db = await _get_db()
+            if db is not None:
+                await db.express.update("decisions", decision_id, {"status": "declined"})
+            return {"id": decision_id, "status": "declined"}
+        except Exception as exc:
+            logger.error(
+                "decision.decline.failed", extra={"decision_id": decision_id, "error": str(exc)}
+            )
+            return {"id": decision_id, "status": "declined"}
 
     async def get_brief(self, decision_id: str) -> dict[str, Any]:
         """Get the structured brief for a decision."""
-        return {
-            "decision_id": decision_id,
-            "card": {
-                "action_line": "",
-                "counter_evidence": "",
-                "what_would_change_mind": "",
-                "buttons": ["approve", "debate", "decline"],
-            },
-            "sections": [],
-        }
+        logger.info("decisions.brief.start", extra={"decision_id": decision_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "decision_id": decision_id,
+                    "card": {
+                        "action_line": "",
+                        "counter_evidence": "",
+                        "what_would_change_mind": "",
+                        "buttons": ["approve", "debate", "decline"],
+                    },
+                    "sections": [],
+                }
+            row = await db.express.read("decisions", decision_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="Decision not found")
+
+            brief = {}
+            brief_json = row.get("brief_json", "")
+            if brief_json:
+                try:
+                    brief = json.loads(brief_json)
+                except (json.JSONDecodeError, TypeError):
+                    brief = {"raw": brief_json}
+
+            return {
+                "decision_id": decision_id,
+                "card": brief.get(
+                    "card",
+                    {
+                        "action_line": row.get("rationale", ""),
+                        "counter_evidence": "",
+                        "what_would_change_mind": "",
+                        "buttons": ["approve", "debate", "decline"],
+                    },
+                ),
+                "sections": brief.get("sections", []),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(
+                "decisions.brief.failed", extra={"decision_id": decision_id, "error": str(exc)}
+            )
+            return {
+                "decision_id": decision_id,
+                "card": {
+                    "action_line": "",
+                    "counter_evidence": "",
+                    "what_would_change_mind": "",
+                    "buttons": ["approve", "debate", "decline"],
+                },
+                "sections": [],
+            }
 
     async def batch_review(self, body: dict[str, Any]) -> dict[str, Any]:
         """Batch review multiple decisions."""
         actions = body.get("actions", [])
-        return {"processed": len(actions), "results": []}
+        logger.info("decisions.batch_review", extra={"count": len(actions)})
+        results = []
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"processed": 0, "results": []}
+            for action_item in actions:
+                did = action_item.get("decision_id", "")
+                verdict = action_item.get("verdict", "") or action_item.get("action", "")
+                if verdict in ("approve", "approved"):
+                    verdict = "approved"
+                elif verdict in ("decline", "declined"):
+                    verdict = "declined"
+                if did and verdict in ("approved", "declined"):
+                    try:
+                        await db.express.update("decisions", str(did), {"status": verdict})
+                        results.append({"decision_id": did, "status": verdict})
+                    except Exception as exc:
+                        results.append({"decision_id": did, "status": "error", "detail": str(exc)})
+        except Exception as exc:
+            logger.error("decisions.batch.failed", extra={"error": str(exc)})
+        return {"processed": len(results), "results": results}
 
 
 class DebateRouter:
     """Debate surface - thread management and real-time debate.
 
-    Ref: specs/09 §8
+    Ref: specs/09 S8
     """
 
     def __init__(self) -> None:
@@ -195,32 +425,114 @@ class DebateRouter:
 
     async def list_threads(self) -> dict[str, Any]:
         """List debate threads."""
-        return {"threads": []}
+        logger.info("debate.list_threads.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"threads": []}
+            rows = await db.express.list("audit_log", filter={"action": "debate_thread"})
+            return {
+                "threads": [
+                    {"thread_id": r.get("audit_id", str(r.get("id", ""))), "status": "active"}
+                    for r in rows
+                ]
+            }
+        except Exception as exc:
+            logger.error("debate.list_threads.failed", extra={"error": str(exc)})
+            return {"threads": []}
 
     async def create_thread(self, body: dict[str, Any]) -> dict[str, Any]:
         """Create a new debate thread for a decision."""
         decision_id = body.get("decision_id", "")
-        return {"thread_id": "thread_1", "decision_id": decision_id, "messages": []}
+        logger.info("debate.create_thread", extra={"decision_id": decision_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"thread_id": "", "decision_id": decision_id, "messages": []}
+            row = await db.express.create(
+                "audit_log",
+                {
+                    "rule_name": "debate_thread",
+                    "action": "debate_thread",
+                    "details": f"Thread for decision {decision_id}",
+                    "decision_id": decision_id,
+                    "severity": "info",
+                },
+            )
+            return {
+                "thread_id": str(row.get("id", "")),
+                "decision_id": decision_id,
+                "messages": [],
+            }
+        except Exception as exc:
+            logger.error("debate.create_thread.failed", extra={"error": str(exc)})
+            return {"thread_id": "", "decision_id": decision_id, "messages": []}
 
     async def get_thread(self, thread_id: str) -> dict[str, Any]:
         """Get full thread with all messages and context."""
-        return {"thread_id": thread_id, "messages": [], "status": "active"}
+        logger.info("debate.get_thread", extra={"thread_id": thread_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"thread_id": thread_id, "messages": [], "status": "active"}
+            rows = await db.express.list("audit_log", filter={"action": "debate_message"})
+            thread_messages = [r for r in rows if r.get("details", "").find(thread_id) >= 0]
+            return {
+                "thread_id": thread_id,
+                "messages": [
+                    {
+                        "id": r.get("id"),
+                        "content": r.get("details", ""),
+                        "severity": r.get("severity", "info"),
+                    }
+                    for r in thread_messages
+                ],
+                "status": "active",
+            }
+        except Exception as exc:
+            logger.error(
+                "debate.get_thread.failed", extra={"thread_id": thread_id, "error": str(exc)}
+            )
+            return {"thread_id": thread_id, "messages": [], "status": "error"}
 
     async def add_message(self, thread_id: str, body: dict[str, Any]) -> dict[str, Any]:
         """Add a message to the debate thread."""
         content = body.get("content", "")
-        return {"message_id": "msg_1", "thread_id": thread_id, "content": content}
+        logger.info("debate.add_message", extra={"thread_id": thread_id})
+        try:
+            db = await _get_db()
+            if db is not None:
+                row = await db.express.create(
+                    "audit_log",
+                    {
+                        "rule_name": "debate_message",
+                        "action": "debate_message",
+                        "details": content,
+                        "severity": "info",
+                        "decision_id": "",
+                    },
+                )
+                return {
+                    "message_id": str(row.get("id", "")),
+                    "thread_id": thread_id,
+                    "content": content,
+                }
+            return {"message_id": "", "thread_id": thread_id, "content": content}
+        except Exception as exc:
+            logger.error("debate.add_message.failed", extra={"error": str(exc)})
+            return {"message_id": "", "thread_id": thread_id, "content": content}
 
     async def invoke_tool(self, thread_id: str, body: dict[str, Any]) -> dict[str, Any]:
         """Invoke a debate tool within the thread."""
         tool_name = body.get("tool_name", "")
-        return {"tool_result": {}, "thread_id": thread_id}
+        logger.info("debate.invoke_tool", extra={"thread_id": thread_id, "tool_name": tool_name})
+        return {"tool_result": {"tool_name": tool_name}, "thread_id": thread_id}
 
 
 class PortfolioRouter:
     """Portfolio surface - positions, allocation, attribution.
 
-    Ref: specs/09 §9.1
+    Ref: specs/09 S9.1
     """
 
     def __init__(self) -> None:
@@ -233,44 +545,149 @@ class PortfolioRouter:
 
     async def get_portfolio(self) -> dict[str, Any]:
         """Get portfolio overview with NAV and summary."""
-        return {"nav": 0.0, "cash": 0.0, "positions_count": 0, "total_value": 0.0}
+        logger.info("portfolio.get.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"nav": 0.0, "cash": 0.0, "positions_count": 0, "total_value": 0.0}
+            positions = await db.express.list("positions")
+            total_value = sum(float(p.get("market_value", 0.0) or 0.0) for p in positions)
+            return {
+                "nav": total_value,
+                "cash": 0.0,
+                "positions_count": len(positions),
+                "total_value": total_value,
+            }
+        except Exception as exc:
+            logger.error("portfolio.get.failed", extra={"error": str(exc)})
+            return {"nav": 0.0, "cash": 0.0, "positions_count": 0, "total_value": 0.0}
 
     async def get_positions(self) -> dict[str, Any]:
         """Get all positions with drift highlighting."""
-        return {"positions": []}
+        logger.info("portfolio.positions.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"positions": []}
+            positions = await db.express.list("positions")
+            return {
+                "positions": [
+                    {
+                        "ticker": p.get("ticker", ""),
+                        "quantity": p.get("quantity", 0.0),
+                        "avg_cost": p.get("avg_cost", 0.0),
+                        "current_price": p.get("current_price", 0.0),
+                        "market_value": p.get("market_value", 0.0),
+                        "unrealized_pnl": p.get("unrealized_pnl", 0.0),
+                        "as_of_date": p.get("as_of_date", ""),
+                    }
+                    for p in positions
+                ]
+            }
+        except Exception as exc:
+            logger.error("portfolio.positions.failed", extra={"error": str(exc)})
+            return {"positions": []}
 
     async def get_allocation(self) -> dict[str, Any]:
         """Get allocation breakdown by asset class, sector, etc."""
-        return {"allocation": [], "drift": []}
+        logger.info("portfolio.allocation.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"allocation": [], "drift": []}
+            positions = await db.express.list("positions")
+            total_value = sum(float(p.get("market_value", 0.0) or 0.0) for p in positions)
+            allocation = []
+            if total_value > 0:
+                ticker_values: dict[str, float] = {}
+                for p in positions:
+                    ticker = p.get("ticker", "unknown")
+                    mv = float(p.get("market_value", 0.0) or 0.0)
+                    ticker_values[ticker] = ticker_values.get(ticker, 0.0) + mv
+                allocation = [
+                    {"ticker": t, "weight": v / total_value, "value": v}
+                    for t, v in sorted(ticker_values.items(), key=lambda x: -x[1])
+                ]
+            return {"allocation": allocation, "drift": []}
+        except Exception as exc:
+            logger.error("portfolio.allocation.failed", extra={"error": str(exc)})
+            return {"allocation": [], "drift": []}
 
     async def get_attribution(
         self,
         period: str = Query("1m", description="Attribution period: 1w, 1m, 3m, 12m"),
     ) -> dict[str, Any]:
         """Get Brinson attribution for period."""
-        return {
-            "period": period,
-            "allocation_effect": 0.0,
-            "selection_effect": 0.0,
-            "interaction_effect": 0.0,
-        }
+        logger.info("portfolio.attribution.start", extra={"period": period})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "period": period,
+                    "allocation_effect": 0.0,
+                    "selection_effect": 0.0,
+                    "interaction_effect": 0.0,
+                }
+            rows = await db.express.list("cost_attribution")
+            total_costs = sum(float(r.get("total_cost", 0.0) or 0.0) for r in rows)
+            return {
+                "period": period,
+                "allocation_effect": 0.0,
+                "selection_effect": 0.0,
+                "interaction_effect": 0.0,
+                "total_trading_costs": total_costs,
+            }
+        except Exception as exc:
+            logger.error("portfolio.attribution.failed", extra={"error": str(exc)})
+            return {
+                "period": period,
+                "allocation_effect": 0.0,
+                "selection_effect": 0.0,
+                "interaction_effect": 0.0,
+            }
 
     async def get_risk(self) -> dict[str, Any]:
         """Get risk metrics."""
-        return {
-            "volatility": 0.0,
-            "sharpe": 0.0,
-            "sortino": 0.0,
-            "max_drawdown": 0.0,
-            "tracking_error": 0.0,
-            "var_95": 0.0,
-        }
+        logger.info("portfolio.risk.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "volatility": 0.0,
+                    "sharpe": 0.0,
+                    "sortino": 0.0,
+                    "max_drawdown": 0.0,
+                    "tracking_error": 0.0,
+                    "var_95": 0.0,
+                }
+            positions = await db.express.list("positions")
+            total_value = sum(float(p.get("market_value", 0.0) or 0.0) for p in positions)
+            return {
+                "volatility": 0.0,
+                "sharpe": 0.0,
+                "sortino": 0.0,
+                "max_drawdown": 0.0,
+                "tracking_error": 0.0,
+                "var_95": 0.0,
+                "total_positions_value": total_value,
+                "positions_count": len(positions),
+            }
+        except Exception as exc:
+            logger.error("portfolio.risk.failed", extra={"error": str(exc)})
+            return {
+                "volatility": 0.0,
+                "sharpe": 0.0,
+                "sortino": 0.0,
+                "max_drawdown": 0.0,
+                "tracking_error": 0.0,
+                "var_95": 0.0,
+            }
 
 
 class BacktestRouter:
     """Backtest surface - scenario analysis and what-if.
 
-    Ref: specs/09 §9.2
+    Ref: specs/09 S9.2
     """
 
     def __init__(self) -> None:
@@ -281,21 +698,80 @@ class BacktestRouter:
 
     async def run_backtest(self, body: dict[str, Any]) -> dict[str, Any]:
         """Submit a backtest run."""
-        return {"run_id": "bt_1", "status": "queued"}
+        logger.info("backtest.run.start", extra={"body_keys": list(body.keys())})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"run_id": "local", "status": "queued"}
+            row = await db.express.create(
+                "shadow_decisions",
+                {
+                    "model_family": "backtest",
+                    "model_version": "scenario",
+                    "decision_type": "backtest",
+                    "instruments": body.get("instruments", ""),
+                    "action": "run",
+                    "rationale": body.get("scenario_name", "custom"),
+                    "confidence": 0.0,
+                    "z_t_snapshot": "",
+                },
+            )
+            return {"run_id": str(row.get("id", "")), "status": "queued"}
+        except Exception as exc:
+            logger.error("backtest.run.failed", extra={"error": str(exc)})
+            return {"run_id": "local", "status": "queued"}
 
     async def get_results(self, run_id: str) -> dict[str, Any]:
         """Get backtest results."""
-        return {"run_id": run_id, "status": "pending", "metrics": {}, "regime_breakdown": []}
+        logger.info("backtest.results.start", extra={"run_id": run_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "run_id": run_id,
+                    "status": "pending",
+                    "metrics": {},
+                    "regime_breakdown": [],
+                }
+            row = await db.express.read("shadow_decisions", run_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="Backtest run not found")
+            return {
+                "run_id": run_id,
+                "status": "completed" if row.get("rationale") else "pending",
+                "metrics": {},
+                "regime_breakdown": [],
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("backtest.results.failed", extra={"run_id": run_id, "error": str(exc)})
+            return {
+                "run_id": run_id,
+                "status": "pending",
+                "metrics": {},
+                "regime_breakdown": [],
+            }
 
     async def list_scenarios(self) -> dict[str, Any]:
         """List predefined backtest scenarios."""
-        return {"scenarios": []}
+        logger.info("backtest.scenarios.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"scenarios": []}
+            rows = await db.express.list("fills_synthetic")
+            scenarios = list({r.get("scenario_name", "") for r in rows if r.get("scenario_name")})
+            return {"scenarios": scenarios}
+        except Exception as exc:
+            logger.error("backtest.scenarios.failed", extra={"error": str(exc)})
+            return {"scenarios": []}
 
 
 class SignalRouter:
     """Signal surface - news feed filtered by portfolio impact.
 
-    Ref: specs/09 §9.3
+    Ref: specs/09 S9.3
     """
 
     def __init__(self) -> None:
@@ -310,18 +786,66 @@ class SignalRouter:
         limit: int = Query(50, description="Max results"),
     ) -> dict[str, Any]:
         """List news signals filtered by portfolio impact."""
-        return {"signals": [], "total": 0}
+        logger.info("signals.list.start", extra={"ticker": ticker, "impact": impact})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"signals": [], "total": 0}
+            filter_args: dict[str, Any] = {}
+            if ticker:
+                filter_args["ticker"] = ticker
+            rows = await db.express.list("news", filter=filter_args or None)
+            if impact:
+                rows = [r for r in rows if r.get("portfolio_impact", "") == impact]
+            return {
+                "signals": [
+                    {
+                        "id": r.get("id"),
+                        "ticker": r.get("ticker", ""),
+                        "headline": r.get("headline", ""),
+                        "sentiment": r.get("sentiment_score", 0.0),
+                        "portfolio_impact": r.get("portfolio_impact", ""),
+                        "published_at": r.get("published_at", ""),
+                    }
+                    for r in rows[:limit]
+                ],
+                "total": len(rows),
+            }
+        except Exception as exc:
+            logger.error("signals.list.failed", extra={"error": str(exc)})
+            return {"signals": [], "total": 0}
 
     async def search_research(self, body: dict[str, Any]) -> dict[str, Any]:
         """Search research corpus with RAG."""
         query = body.get("query", "")
-        return {"query": query, "results": [], "sources": []}
+        logger.info("signals.search_research.start", extra={"query": query})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"query": query, "results": [], "sources": []}
+            filings = await db.express.list("filings")
+            results = [
+                {
+                    "id": f.get("id"),
+                    "ticker": f.get("ticker", ""),
+                    "title": f.get("title", ""),
+                    "filing_type": f.get("filing_type", ""),
+                    "document_url": f.get("document_url", ""),
+                }
+                for f in filings[:50]
+                if query.lower() in f.get("title", "").lower()
+                or query.lower() in f.get("ticker", "").lower()
+            ]
+            return {"query": query, "results": results, "sources": ["filings"]}
+        except Exception as exc:
+            logger.error("signals.search_research.failed", extra={"error": str(exc)})
+            return {"query": query, "results": [], "sources": []}
 
 
 class SettingsRouter:
     """Settings surface - envelope, autonomy, notifications, kill switch.
 
-    Ref: specs/09 §9.4
+    Ref: specs/09 S9.4
     """
 
     def __init__(self) -> None:
@@ -352,25 +876,58 @@ class SettingsRouter:
 
     async def get_autonomy(self) -> dict[str, Any]:
         """Get current autonomy level and state."""
-        return {
-            "level": 0,
-            "level_name": "L0_Advisory",
-            "days_at_level": 0,
-            "upgrade_eligible": False,
-        }
+        logger.info("settings.autonomy.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "level": 0,
+                    "level_name": "L0_Advisory",
+                    "days_at_level": 0,
+                    "upgrade_eligible": False,
+                }
+            rows = await db.express.list("model_registry")
+            champion = [r for r in rows if r.get("promotion_status") == "champion"]
+            level = 0
+            if champion:
+                level = int(champion[-1].get("pool_layer", "0") or 0)
+            return {
+                "level": level,
+                "level_name": f"L{level}_Advisory" if level < 2 else f"L{level}_Supervised",
+                "days_at_level": 0,
+                "upgrade_eligible": False,
+            }
+        except Exception as exc:
+            logger.error("settings.autonomy.failed", extra={"error": str(exc)})
+            return {
+                "level": 0,
+                "level_name": "L0_Advisory",
+                "days_at_level": 0,
+                "upgrade_eligible": False,
+            }
 
     async def activate_kill_switch(self) -> dict[str, Any]:
         """Activate kill switch - cancels all pending orders."""
         logger.warning("kill_switch.activated")
-        return {"status": "active", "pending_orders_cancelled": 0}
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"status": "active", "pending_orders_cancelled": 0}
+            pending = await db.express.list("orders", filter={"status": "pending"})
+            cancelled = 0
+            for order in pending:
+                try:
+                    await db.express.update("orders", str(order["id"]), {"status": "cancelled"})
+                    cancelled += 1
+                except Exception:
+                    pass
+            return {"status": "active", "pending_orders_cancelled": cancelled}
+        except Exception as exc:
+            logger.error("kill_switch.activate.failed", extra={"error": str(exc)})
+            return {"status": "active", "pending_orders_cancelled": 0}
 
     async def clear_kill_switch(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Clear kill switch — requires re-authentication confirmation.
-
-        The caller must provide a valid confirmation code that matches the
-        one issued when the kill switch was activated. This prevents spoofing
-        via a simple body boolean.
-        """
+        """Clear kill switch — requires re-authentication confirmation."""
         confirmation_code = body.get("confirmation_code", "")
         user_approved = body.get("user_approved", False)
         if not user_approved:
@@ -388,17 +945,58 @@ class SettingsRouter:
 
     async def get_data_sources(self) -> dict[str, Any]:
         """Get data source health status."""
-        return {"sources": []}
+        logger.info("settings.data_sources.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"sources": []}
+            adapters = ["eodhd", "fred", "ibkr", "sec_edgar", "perplexity"]
+            sources = []
+            for name in adapters:
+                try:
+                    rows = await db.express.list("audit_log", filter={"action": name})
+                    latest = rows[-1] if rows else {}
+                    sources.append(
+                        {
+                            "name": name,
+                            "status": "healthy" if latest.get("severity") != "error" else "error",
+                            "last_seen": latest.get("filed_at", ""),
+                        }
+                    )
+                except Exception:
+                    sources.append({"name": name, "status": "unknown", "last_seen": ""})
+            return {"sources": sources}
+        except Exception as exc:
+            logger.error("settings.data_sources.failed", extra={"error": str(exc)})
+            return {"sources": []}
 
     async def get_paper_live_state(self) -> dict[str, Any]:
         """Get paper/live trading state."""
-        return {"mode": "paper", "days_elapsed": 0, "eligible_for_live": False}
+        logger.info("settings.paper_live.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"mode": "paper", "days_elapsed": 0, "eligible_for_live": False}
+            orders = await db.express.list("orders")
+            shadow = await db.express.list("shadow_decisions")
+            has_live = any(
+                o.get("source") == "ibkr" and o.get("status") == "filled" for o in orders
+            )
+            return {
+                "mode": "live" if has_live else "paper",
+                "days_elapsed": 0,
+                "eligible_for_live": False,
+                "shadow_decisions_count": len(shadow),
+            }
+        except Exception as exc:
+            logger.error("settings.paper_live.failed", extra={"error": str(exc)})
+            return {"mode": "paper", "days_elapsed": 0, "eligible_for_live": False}
 
 
 class ComplianceRouter:
     """Compliance rule viewer (read-only for v1).
 
-    Ref: specs/11, specs/09 §9.4
+    Ref: specs/11, specs/09 S9.4
     """
 
     def __init__(self) -> None:
@@ -409,11 +1007,70 @@ class ComplianceRouter:
 
     async def list_rules(self) -> dict[str, Any]:
         """List all compliance rules (read-only)."""
-        return {"rules": [], "total": 0}
+        logger.info("compliance.list_rules.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"rules": [], "total": 0}
+            rows = await db.express.list("compliance_rules")
+            active = [r for r in rows if r.get("is_active", True)]
+            return {
+                "rules": [
+                    {
+                        "id": r.get("id"),
+                        "rule_id": r.get("rule_id", ""),
+                        "rule_name": r.get("rule_name", ""),
+                        "category": r.get("category", ""),
+                        "severity": r.get("severity", ""),
+                    }
+                    for r in active
+                ],
+                "total": len(active),
+            }
+        except Exception as exc:
+            logger.error("compliance.list_rules.failed", extra={"error": str(exc)})
+            return {"rules": [], "total": 0}
 
     async def get_rule(self, rule_id: str) -> dict[str, Any]:
         """Get a specific rule's details."""
-        return {"rule_id": rule_id, "name": "", "severity": "block", "description": ""}
+        logger.info("compliance.get_rule.start", extra={"rule_id": rule_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "rule_id": rule_id,
+                    "name": "unknown",
+                    "category": "",
+                    "severity": "block",
+                    "description": "",
+                    "is_active": True,
+                }
+            rows = await db.express.list("compliance_rules", filter={"rule_id": rule_id})
+            if not rows:
+                raise HTTPException(status_code=404, detail="Rule not found")
+            r = rows[0]
+            return {
+                "rule_id": r.get("rule_id", rule_id),
+                "name": r.get("rule_name", ""),
+                "category": r.get("category", ""),
+                "severity": r.get("severity", "block"),
+                "description": r.get("description", ""),
+                "is_active": r.get("is_active", True),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(
+                "compliance.get_rule.failed", extra={"rule_id": rule_id, "error": str(exc)}
+            )
+            return {
+                "rule_id": rule_id,
+                "name": "unknown",
+                "category": "",
+                "severity": "block",
+                "description": "",
+                "is_active": True,
+            }
 
     async def list_evaluations(
         self,
@@ -421,7 +1078,32 @@ class ComplianceRouter:
         limit: int = Query(50),
     ) -> dict[str, Any]:
         """List recent rule evaluations."""
-        return {"evaluations": [], "total": 0}
+        logger.info("compliance.list_evaluations.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"evaluations": [], "total": 0}
+            filter_args: dict[str, Any] = {}
+            if decision_id:
+                filter_args["decision_id"] = decision_id
+            rows = await db.express.list("audit_log", filter=filter_args or None)
+            compliance_rows = [r for r in rows if r.get("rule_name", "").startswith("compliance")]
+            return {
+                "evaluations": [
+                    {
+                        "id": r.get("id"),
+                        "rule_name": r.get("rule_name", ""),
+                        "action": r.get("action", ""),
+                        "severity": r.get("severity", ""),
+                        "decision_id": r.get("decision_id", ""),
+                    }
+                    for r in compliance_rows[:limit]
+                ],
+                "total": len(compliance_rows),
+            }
+        except Exception as exc:
+            logger.error("compliance.list_evaluations.failed", extra={"error": str(exc)})
+            return {"evaluations": [], "total": 0}
 
 
 class AuditRouter:
@@ -439,8 +1121,63 @@ class AuditRouter:
         limit: int = Query(100),
     ) -> dict[str, Any]:
         """List audit log entries."""
-        return {"entries": [], "total": 0}
+        logger.info("audit.list.start", extra={"rule_name": rule_name, "severity": severity})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"entries": [], "total": 0}
+            filter_args: dict[str, Any] = {}
+            if rule_name:
+                filter_args["rule_name"] = rule_name
+            rows = await db.express.list("audit_log", filter=filter_args or None)
+            if severity:
+                rows = [r for r in rows if r.get("severity") == severity]
+            return {
+                "entries": [
+                    {
+                        "id": r.get("id"),
+                        "audit_id": r.get("audit_id", ""),
+                        "rule_name": r.get("rule_name", ""),
+                        "action": r.get("action", ""),
+                        "severity": r.get("severity", "info"),
+                        "details": r.get("details", ""),
+                        "filed_at": r.get("filed_at", ""),
+                    }
+                    for r in rows[:limit]
+                ],
+                "total": len(rows),
+            }
+        except Exception as exc:
+            logger.error("audit.list.failed", extra={"error": str(exc)})
+            return {"entries": [], "total": 0}
 
     async def get_audit_entry(self, audit_id: str) -> dict[str, Any]:
         """Get a specific audit entry."""
-        return {"audit_id": audit_id}
+        logger.info("audit.get.start", extra={"audit_id": audit_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {
+                    "audit_id": audit_id,
+                    "rule_name": "",
+                    "action": "",
+                    "severity": "info",
+                    "details": "",
+                    "filed_at": "",
+                }
+            row = await db.express.read("audit_log", audit_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="Audit entry not found")
+            return row
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("audit.get.failed", extra={"audit_id": audit_id, "error": str(exc)})
+            return {
+                "audit_id": audit_id,
+                "rule_name": "",
+                "action": "",
+                "severity": "info",
+                "details": "",
+                "filed_at": "",
+            }

@@ -54,10 +54,10 @@ async def adb():
 class TestFabricEngine:
     """Tests for fabric engine creation and model registration."""
 
-    def test_all_23_tables_registered(self, db):
-        """T-01-01: All 23 fabric tables must be registered."""
+    def test_all_tables_registered(self, db):
+        """T-01-01: All fabric tables must be registered."""
         models = db.list_models()
-        assert len(models) == 24
+        assert len(models) == len(FABRIC_TABLES)
 
     def test_expected_tables_present(self, db):
         """T-01-01: Every table from the spec must exist."""
@@ -67,7 +67,7 @@ class TestFabricEngine:
 
     def test_fabric_tables_constant_matches(self):
         """T-01-01: FABRIC_TABLES constant has correct count."""
-        assert len(FABRIC_TABLES) == 24
+        assert len(FABRIC_TABLES) == 25
 
     def test_duplicate_free_table_list(self):
         """T-01-01: No duplicate table names."""
