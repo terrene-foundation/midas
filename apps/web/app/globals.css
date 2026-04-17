@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --bg-base: #0F1117;
+  --bg-surface: #1A1D27;
+  --bg-elevated: #242731;
+  --bg-hover: #2D3142;
+  --accent-gold: #D4A843;
+  --accent-gold-dim: #B8922F;
+  --gain-green: #34A77B;
+  --loss-red: #E85D5D;
+  --regime-calm: #34A77B;
+  --regime-elevated: #D4A843;
+  --regime-urgent: #E8914A;
+  --regime-crisis: #E85D5D;
+  --text-primary: #F0F0F5;
+  --text-secondary: #9CA3AF;
+  --text-muted: #6B7280;
+  --border-default: #2D3142;
+  --border-accent: #D4A843;
+  --radius: 8px;
+  --transition-default: 200ms;
+  --transition-regime: 500ms;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono-nums {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 200ms ease-out;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--bg-surface) 25%,
+    var(--bg-elevated) 50%,
+    var(--bg-surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
