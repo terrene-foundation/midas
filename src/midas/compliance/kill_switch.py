@@ -68,31 +68,36 @@ class KillSwitch:
         self._active = True
         self._confirmation_code = secrets.token_hex(8)
 
-        # Write audit record
-        await self._db.express.create(
-            "audit_log",
-            {
-                "rule_name": "kill_switch",
-                "action": "kill_switch_activate",
-                "details": json.dumps(
-                    {
-                        "reason": reason,
-                        "activated_at": now,
-                    }
-                ),
-                "severity": "info",
-                "filed_at": now,
-            },
-        )
-
-        self._log.critical("kill_switch.activated", reason=reason)
-
-        return {
+        result = {
             "active": True,
             "reason": reason,
             "activated_at": now,
             "confirmation_code": self._confirmation_code,
         }
+
+        # Write audit record (non-fatal — confirmation code is already generated)
+        try:
+            await self._db.express.create(
+                "audit_log",
+                {
+                    "rule_name": "kill_switch",
+                    "action": "kill_switch_activate",
+                    "details": json.dumps(
+                        {
+                            "reason": reason,
+                            "activated_at": now,
+                        }
+                    ),
+                    "severity": "info",
+                    "filed_at": now,
+                },
+            )
+        except Exception as exc:
+            self._log.warning("kill_switch.audit_write_failed", error=str(exc))
+
+        self._log.critical("kill_switch.activated", reason=reason)
+
+        return result
 
     async def is_active(self) -> bool:
         """Check if kill switch is active."""

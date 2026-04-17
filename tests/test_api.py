@@ -507,9 +507,17 @@ class TestSettingsEndpoint:
         assert resp.status_code == 400
 
     def test_clear_kill_switch_succeeds_with_approval(self, client):
+        # Must activate first to get a valid confirmation code
+        activate_resp = client.post("/api/v1/settings/kill-switch")
+        assert activate_resp.status_code == 200
+        activate_data = activate_resp.json()
+        confirmation_code = activate_data.get("confirmation_code")
+        assert confirmation_code, "activate must return confirmation_code"
+
+        # Now clear with the valid code
         resp = client.post(
             "/api/v1/settings/kill-switch/clear",
-            json={"user_approved": True, "confirmation_code": "abc-123"},
+            json={"user_approved": True, "confirmation_code": confirmation_code},
         )
         assert resp.status_code == 200
         data = resp.json()

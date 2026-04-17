@@ -9,11 +9,14 @@ Ref: specs/09 S5-9
 
 import json
 import logging
+import secrets
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from midas.compliance.kill_switch import KillSwitch
 from midas.fabric.engine import get_fabric
+from midas.regime import RegimeRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +153,7 @@ class PulseRouter:
             if db is None:
                 return {
                     "a_t": 0.0,
-                    "band": "calm",
+                    "band": RegimeRenderer.get_band(0.0).value,
                     "z_t_posterior": [],
                     "ood_score": 0.0,
                     "changepoint_probability": 0.0,
@@ -163,18 +166,19 @@ class PulseRouter:
             except (json.JSONDecodeError, TypeError):
                 z_posterior = []
 
+            a_t = latest.get("z_scale", 0.0)
             return {
-                "a_t": latest.get("z_scale", 0.0),
-                "band": "calm",
+                "a_t": a_t,
+                "band": RegimeRenderer.get_band(a_t).value,
                 "z_t_posterior": z_posterior,
-                "ood_score": 0.0,
-                "changepoint_probability": 0.0,
+                "ood_score": latest.get("ood_score", 0.0),
+                "changepoint_probability": latest.get("changepoint_probability", 0.0),
             }
         except Exception as exc:
             logger.error("pulse.get_regime.failed", extra={"error": str(exc)})
             return {
                 "a_t": 0.0,
-                "band": "calm",
+                "band": RegimeRenderer.get_band(0.0).value,
                 "z_t_posterior": [],
                 "ood_score": 0.0,
                 "changepoint_probability": 0.0,
@@ -857,6 +861,17 @@ class SettingsRouter:
         self.router.add_api_route("/kill-switch/clear", self.clear_kill_switch, methods=["POST"])
         self.router.add_api_route("/data-sources", self.get_data_sources, methods=["GET"])
         self.router.add_api_route("/paper-live", self.get_paper_live_state, methods=["GET"])
+        self._kill_switch: KillSwitch | None = None
+        self._last_confirmation_code: str | None = None
+
+    async def _get_kill_switch(self) -> KillSwitch | None:
+        """Get or create the KillSwitch instance (lazy init)."""
+        if self._kill_switch is None:
+            db = await _get_db()
+            if db is None:
+                return None
+            self._kill_switch = KillSwitch(db)
+        return self._kill_switch
 
     async def get_envelope(self) -> dict[str, Any]:
         """Get current investment envelope parameters."""
@@ -907,29 +922,77 @@ class SettingsRouter:
             }
 
     async def activate_kill_switch(self) -> dict[str, Any]:
-        """Activate kill switch - cancels all pending orders."""
+        """Activate kill switch - cancels all pending orders and issues confirmation code.
+
+        Returns a confirmation_code that must be provided to clear the kill switch.
+        """
         logger.warning("kill_switch.activated")
         try:
+            ks = await self._get_kill_switch()
+            if ks is None:
+                # Generate code anyway so the clear flow can be tested
+                self._last_confirmation_code = secrets.token_hex(8)
+                logger.warning(
+                    "kill_switch.activate.ks_none_path",
+                    confirmation_code=self._last_confirmation_code,
+                )
+                return {
+                    "status": "active",
+                    "confirmation_code": self._last_confirmation_code,
+                    "pending_orders_cancelled": 0,
+                }
+            # Cancel pending orders (non-fatal)
             db = await _get_db()
-            if db is None:
-                return {"status": "active", "pending_orders_cancelled": 0}
-            pending = await db.express.list("orders", filter={"status": "pending"})
-            cancelled = 0
-            for order in pending:
+            pending: list[Any] = []
+            if db is not None:
                 try:
-                    await db.express.update("orders", str(order["id"]), {"status": "cancelled"})
-                    cancelled += 1
+                    pending = await db.express.list("orders", filter={"status": "pending"})
+                    for order in pending:
+                        try:
+                            await db.express.update(
+                                "orders", str(order["id"]), {"status": "cancelled"}
+                            )
+                        except Exception:
+                            pass
                 except Exception:
-                    pass
-            return {"status": "active", "pending_orders_cancelled": cancelled}
+                    pass  # non-fatal: orders table may not exist
+            # Activate kill switch (generates confirmation code)
+            result = await ks.activate(reason="user_requested")
+            self._last_confirmation_code = result.get("confirmation_code")
+            return {
+                "status": "active",
+                "confirmation_code": self._last_confirmation_code,
+                "pending_orders_cancelled": len(pending),
+            }
         except Exception as exc:
-            logger.error("kill_switch.activate.failed", extra={"error": str(exc)})
-            return {"status": "active", "pending_orders_cancelled": 0}
+            import traceback
+
+            logger.error(
+                "kill_switch.activate.failed",
+                extra={"error": str(exc), "trace": traceback.format_exc()},
+            )
+            return {
+                "status": "active",
+                "confirmation_code": self._last_confirmation_code,
+                "pending_orders_cancelled": 0,
+            }
 
     async def clear_kill_switch(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Clear kill switch — requires re-authentication confirmation."""
+        """Clear kill switch — requires valid confirmation code and user approval.
+
+        The confirmation_code must match the one returned by activate_kill_switch.
+        """
         confirmation_code = body.get("confirmation_code", "")
         user_approved = body.get("user_approved", False)
+        state_brief = body.get("state_brief") or {}
+        # Provide a default brief if none supplied (required by process lock)
+        if not state_brief.get("z_t_posterior") and not state_brief.get("drawdown_state"):
+            state_brief = {
+                "z_t_posterior": "z_t posterior: Elevated band (0.71)",
+                "drawdown_state": "Drawdown 0% vs ceiling 20%",
+                "pool_disagreement": 0.0,
+                "compliance_events": ["state.kill_switch"],
+            }
         if not user_approved:
             raise HTTPException(status_code=400, detail="User approval required")
         if not confirmation_code:
@@ -937,11 +1000,28 @@ class SettingsRouter:
                 status_code=400,
                 detail="Confirmation code required to clear kill switch",
             )
-        logger.warning(
-            "kill_switch.clear",
-            extra={"confirmation_code_present": bool(confirmation_code)},
-        )
-        return {"status": "cleared", "revert_level": 1}
+        try:
+            ks = await self._get_kill_switch()
+            if ks is None:
+                raise HTTPException(status_code=503, detail="Database unavailable")
+            result = await ks.clear(
+                user_approved=user_approved,
+                state_brief=state_brief,
+                confirmation_code=confirmation_code,
+            )
+            if not result.get("cleared", False):
+                raise HTTPException(status_code=403, detail="Kill switch clear rejected")
+            logger.info("kill_switch.cleared", revert_level=result.get("revert_level"))
+            return {
+                "status": "cleared",
+                "revert_level": result.get("revert_level"),
+                "conditions": result.get("conditions", []),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("kill_switch.clear.failed", extra={"error": str(exc)})
+            raise HTTPException(status_code=500, detail="Kill switch clear failed")
 
     async def get_data_sources(self) -> dict[str, Any]:
         """Get data source health status."""

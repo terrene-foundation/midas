@@ -426,6 +426,22 @@ def _register_models(db: DataFlow) -> None:
         created_at: str = ""
         updated_at: str = ""
 
+    # -- 26. users -----------------------------------------------------------
+    @db.model
+    class users:
+        id: int
+        email: str
+        password_hash: str
+
+    # -- 27. sessions --------------------------------------------------------
+    @db.model
+    class sessions:
+        id: int
+        user_id: int
+        refresh_token_hash: str
+        expires_at: str = ""
+        revoked_at: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -458,6 +474,8 @@ FABRIC_TABLES: list[str] = [
     "sweep_history",
     "credentials",
     "compliance_rules",
+    "users",
+    "sessions",
 ]
 
 
