@@ -329,7 +329,7 @@ class DecisionsRouter:
             logger.error(
                 "decision.approve.failed", extra={"decision_id": decision_id, "error": str(exc)}
             )
-            return {"id": decision_id, "status": "approved"}
+            raise HTTPException(status_code=500, detail="Failed to approve decision")
 
     async def decline(self, decision_id: str, request: Request) -> dict[str, Any]:
         """Decline a pending decision. Requires re-authentication and decision ownership."""
@@ -361,7 +361,7 @@ class DecisionsRouter:
             logger.error(
                 "decision.decline.failed", extra={"decision_id": decision_id, "error": str(exc)}
             )
-            return {"id": decision_id, "status": "declined"}
+            raise HTTPException(status_code=500, detail="Failed to decline decision")
 
     async def get_brief(self, decision_id: str) -> dict[str, Any]:
         """Get the structured brief for a decision."""

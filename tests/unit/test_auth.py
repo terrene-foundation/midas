@@ -8,6 +8,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 
 os.environ.setdefault("JWT_SECRET", "test-secret-key-for-unit-tests-must-be-32-bytes-long")
 
@@ -18,6 +19,8 @@ from midas.api.auth import (
     seed_default_user,
     _hash_password,
     _verify_password,
+    jwt_auth_enabled,
+    verify_jwt_or_pass,
 )
 
 
@@ -453,3 +456,112 @@ class TestAuthReauth:
             assert exc_info.value.status_code == 401
         finally:
             routes_mod._get_db = original_get_db
+
+
+# ---------------------------------------------------------------------------
+# JWT middleware and helpers
+# ---------------------------------------------------------------------------
+
+
+class TestJWTMiddleware:
+    def test_jwt_auth_enabled_when_secret_set(self):
+        assert jwt_auth_enabled() is True
+
+    def test_jwt_auth_disabled_when_secret_empty(self):
+        original = os.environ.pop("JWT_SECRET", None)
+        try:
+            assert jwt_auth_enabled() is False
+        finally:
+            if original:
+                os.environ["JWT_SECRET"] = original
+
+    @pytest.mark.asyncio
+    async def test_exempt_path_returns_none(self):
+        request = AsyncMock()
+        request.url = MagicMock()
+        request.url.path = "/api/v1/health"
+        result = await verify_jwt_or_pass(request)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_exempt_path_login(self):
+        request = AsyncMock()
+        request.url = MagicMock()
+        request.url.path = "/api/v1/auth/login"
+        result = await verify_jwt_or_pass(request)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_health_subpath_exempt(self):
+        request = AsyncMock()
+        request.url = MagicMock()
+        request.url.path = "/api/v1/health/deep"
+        result = await verify_jwt_or_pass(request)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_dev_mode_no_secret_passes(self):
+        original = os.environ.pop("JWT_SECRET", None)
+        try:
+            request = AsyncMock()
+            request.url = MagicMock()
+            request.url.path = "/api/v1/decisions"
+            result = await verify_jwt_or_pass(request)
+            assert result is None
+        finally:
+            if original:
+                os.environ["JWT_SECRET"] = original
+
+    @pytest.mark.asyncio
+    async def test_valid_token_returns_payload(self):
+        token = create_access_token("42", "user@test.com")
+        request = AsyncMock()
+        request.url = MagicMock()
+        request.url.path = "/api/v1/decisions"
+        request.headers = {"Authorization": f"Bearer {token}"}
+        result = await verify_jwt_or_pass(request)
+        assert result["sub"] == "42"
+        assert result["email"] == "user@test.com"
+
+    @pytest.mark.asyncio
+    async def test_missing_bearer_raises_401(self):
+        request = AsyncMock()
+        request.url = MagicMock()
+        request.url.path = "/api/v1/decisions"
+        request.headers = {"Authorization": "Basic abc"}
+        with pytest.raises(HTTPException) as exc_info:
+            await verify_jwt_or_pass(request)
+        assert exc_info.value.status_code == 401
+        assert "Missing or invalid" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_expired_token_raises_401(self):
+        import jwt as pyjwt
+        from datetime import datetime, timedelta, timezone
+
+        payload = {
+            "sub": "1",
+            "email": "x@y.com",
+            "type": "access",
+            "exp": datetime.now(timezone.utc) - timedelta(hours=1),
+        }
+        token = pyjwt.encode(payload, os.environ["JWT_SECRET"], algorithm="HS256")
+        request = AsyncMock()
+        request.url = MagicMock()
+        request.url.path = "/api/v1/decisions"
+        request.headers = {"Authorization": f"Bearer {token}"}
+        with pytest.raises(HTTPException) as exc_info:
+            await verify_jwt_or_pass(request)
+        assert exc_info.value.status_code == 401
+        assert "expired" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_raises_401(self):
+        request = AsyncMock()
+        request.url = MagicMock()
+        request.url.path = "/api/v1/decisions"
+        request.headers = {"Authorization": "Bearer garbage.token.here"}
+        with pytest.raises(HTTPException) as exc_info:
+            await verify_jwt_or_pass(request)
+        assert exc_info.value.status_code == 401
+        assert "Invalid token" in exc_info.value.detail

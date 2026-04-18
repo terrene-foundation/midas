@@ -5,12 +5,13 @@ Implements: T-23-02 — channel subscription with regime, decision, and portfoli
 Ref: specs/09 S5, specs/10 S3
 """
 
-import asyncio
 import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from midas.api.auth import decode_access_token, jwt_auth_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +54,29 @@ class WebSocketRouter:
         self.router = APIRouter()
         self.router.add_api_websocket_route("/ws", self.websocket_endpoint)
 
+    async def _authenticate(self, ws: WebSocket) -> dict[str, Any] | None:
+        """Check JWT auth. In dev mode (no JWT_SECRET), allow all."""
+        if not jwt_auth_enabled():
+            return {"sub": "dev", "email": ""}
+        # Expect token as query param: ws://host/api/v1/ws?token=xxx
+        token = ws.query_params.get("token", "")
+        if not token:
+            return None
+        try:
+            return decode_access_token(token)
+        except Exception:
+            return None
+
     async def websocket_endpoint(self, ws: WebSocket) -> None:
         channels: list[str] = []
         try:
+            user = await self._authenticate(ws)
+            if user is None and jwt_auth_enabled():
+                await ws.close(code=4001, reason="Authentication required")
+                return
+
             await ws.accept()
-            logger.info("ws.connected")
+            logger.info("ws.connected", extra={"user_id": user.get("sub", "") if user else ""})
 
             init_msg = await ws.receive_text()
             try:

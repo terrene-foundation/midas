@@ -116,6 +116,10 @@ def create_app(
             return await call_next(request)
 
         # No auth configured (dev mode)
+        logger.warning(
+            "auth.dev_mode_no_auth",
+            extra={"path": path, "note": "All endpoints accessible without authentication"},
+        )
         return await call_next(request)
 
     # Mount all routers

@@ -8,6 +8,7 @@ Ref: specs/11 S6.2 (JWT auth), specs/08 S1 (trust boundary)
 """
 
 import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -57,6 +58,7 @@ try:
         return bcrypt.checkpw(password.encode(), hashed.encode())
 
 except ImportError:
+    logger.warning("auth.bcrypt_unavailable_using_sha256_fallback")
 
     def _hash_password(password: str) -> str:
         salt = secrets.token_hex(16)
@@ -65,7 +67,8 @@ except ImportError:
 
     def _verify_password(password: str, hashed: str) -> bool:
         salt, h = hashed.split("$", 1)
-        return hashlib.sha256(f"{salt}{password}".encode()).hexdigest() == h
+        computed = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+        return hmac.compare_digest(computed, h)
 
 
 # ---------------------------------------------------------------------------

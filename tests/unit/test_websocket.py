@@ -13,10 +13,13 @@ from midas.api.websocket import ConnectionManager, VALID_CHANNELS
 
 
 class MockWebSocket:
-    def __init__(self):
+    def __init__(self, token: str = ""):
         self.sent: list[dict] = []
         self._incoming: list[str] = []
         self._accepted = False
+        self.query_params = {"token": token}
+        self._close_code: int | None = None
+        self._close_reason: str = ""
 
     def add_incoming(self, data: str):
         self._incoming.append(data)
@@ -31,6 +34,10 @@ class MockWebSocket:
         if self._incoming:
             return self._incoming.pop(0)
         raise WebSocketDisconnect()
+
+    async def close(self, code: int = 1000, reason: str = ""):
+        self._close_code = code
+        self._close_reason = reason
 
 
 async def _failing_send(data):
@@ -87,72 +94,121 @@ class TestConnectionManager:
 class TestWebSocketEndpoint:
     @pytest.mark.asyncio
     async def test_full_flow(self):
+        import os
+
         from midas.api.websocket import WebSocketRouter
 
-        router = WebSocketRouter()
-        ws = MockWebSocket()
-        ws.add_incoming(json.dumps({"channels": ["regime", "portfolio"]}))
-        ws.add_incoming(json.dumps({"type": "ping"}))
-        ws.add_incoming(json.dumps({"type": "subscribe", "channels": ["debate"]}))
-        ws.add_incoming(json.dumps({"type": "unsubscribe", "channels": ["portfolio"]}))
+        original = os.environ.pop("JWT_SECRET", None)
+        try:
+            router = WebSocketRouter()
+            ws = MockWebSocket()
+            ws.add_incoming(json.dumps({"channels": ["regime", "portfolio"]}))
+            ws.add_incoming(json.dumps({"type": "ping"}))
+            ws.add_incoming(json.dumps({"type": "subscribe", "channels": ["debate"]}))
+            ws.add_incoming(json.dumps({"type": "unsubscribe", "channels": ["portfolio"]}))
 
-        await router.websocket_endpoint(ws)
+            await router.websocket_endpoint(ws)
 
-        assert ws._accepted
-        connected_msg = ws.sent[0]
-        assert connected_msg["type"] == "connected"
-        assert "regime" in connected_msg["channels"]
+            assert ws._accepted
+            connected_msg = ws.sent[0]
+            assert connected_msg["type"] == "connected"
+            assert "regime" in connected_msg["channels"]
 
-        pong_msg = ws.sent[1]
-        assert pong_msg["type"] == "pong"
+            pong_msg = ws.sent[1]
+            assert pong_msg["type"] == "pong"
 
-        sub_msg = ws.sent[2]
-        assert sub_msg["type"] == "subscribed"
-        assert "debate" in sub_msg["channels"]
+            sub_msg = ws.sent[2]
+            assert sub_msg["type"] == "subscribed"
+            assert "debate" in sub_msg["channels"]
 
-        unsub_msg = ws.sent[3]
-        assert unsub_msg["type"] == "unsubscribed"
-        assert "portfolio" not in unsub_msg["channels"]
+            unsub_msg = ws.sent[3]
+            assert unsub_msg["type"] == "unsubscribed"
+            assert "portfolio" not in unsub_msg["channels"]
+        finally:
+            if original:
+                os.environ["JWT_SECRET"] = original
 
     @pytest.mark.asyncio
     async def test_invalid_json(self):
+        import os
+
         from midas.api.websocket import WebSocketRouter
 
-        router = WebSocketRouter()
-        ws = MockWebSocket()
-        ws.add_incoming(json.dumps({"channels": ["regime"]}))
-        ws.add_incoming("not valid json{{{")
+        original = os.environ.pop("JWT_SECRET", None)
+        try:
+            router = WebSocketRouter()
+            ws = MockWebSocket()
+            ws.add_incoming(json.dumps({"channels": ["regime"]}))
+            ws.add_incoming("not valid json{{{")
 
-        await router.websocket_endpoint(ws)
+            await router.websocket_endpoint(ws)
 
-        error_msg = [m for m in ws.sent if m.get("type") == "error"]
-        assert len(error_msg) == 1
-        assert "Invalid JSON" in error_msg[0]["detail"]
+            error_msg = [m for m in ws.sent if m.get("type") == "error"]
+            assert len(error_msg) == 1
+            assert "Invalid JSON" in error_msg[0]["detail"]
+        finally:
+            if original:
+                os.environ["JWT_SECRET"] = original
 
     @pytest.mark.asyncio
     async def test_unknown_message_type(self):
+        import os
+
         from midas.api.websocket import WebSocketRouter
 
-        router = WebSocketRouter()
-        ws = MockWebSocket()
-        ws.add_incoming(json.dumps({"channels": ["regime"]}))
-        ws.add_incoming(json.dumps({"type": "unknown_thing"}))
+        original = os.environ.pop("JWT_SECRET", None)
+        try:
+            router = WebSocketRouter()
+            ws = MockWebSocket()
+            ws.add_incoming(json.dumps({"channels": ["regime"]}))
+            ws.add_incoming(json.dumps({"type": "unknown_thing"}))
 
-        await router.websocket_endpoint(ws)
+            await router.websocket_endpoint(ws)
 
-        error_msg = [m for m in ws.sent if m.get("type") == "error"]
-        assert any("Unknown type" in m["detail"] for m in error_msg)
+            error_msg = [m for m in ws.sent if m.get("type") == "error"]
+            assert any("Unknown type" in m["detail"] for m in error_msg)
+        finally:
+            if original:
+                os.environ["JWT_SECRET"] = original
 
     @pytest.mark.asyncio
     async def test_invalid_channel_ignored(self):
+        import os
+
         from midas.api.websocket import WebSocketRouter
 
-        router = WebSocketRouter()
-        ws = MockWebSocket()
-        ws.add_incoming(json.dumps({"channels": ["regime", "hacked_channel"]}))
+        original = os.environ.pop("JWT_SECRET", None)
+        try:
+            router = WebSocketRouter()
+            ws = MockWebSocket()
+            ws.add_incoming(json.dumps({"channels": ["regime", "hacked_channel"]}))
 
-        await router.websocket_endpoint(ws)
+            await router.websocket_endpoint(ws)
 
-        connected_msg = ws.sent[0]
-        assert "hacked_channel" not in connected_msg["channels"]
-        assert "regime" in connected_msg["channels"]
+            connected_msg = ws.sent[0]
+            assert "hacked_channel" not in connected_msg["channels"]
+            assert "regime" in connected_msg["channels"]
+        finally:
+            if original:
+                os.environ["JWT_SECRET"] = original
+
+    @pytest.mark.asyncio
+    async def test_auth_rejection_when_jwt_required(self):
+        import os
+
+        from midas.api.websocket import WebSocketRouter
+
+        original = os.environ.get("JWT_SECRET")
+        os.environ["JWT_SECRET"] = "test-secret-forcing-auth"
+        try:
+            router = WebSocketRouter()
+            ws = MockWebSocket(token="")  # no token
+
+            await router.websocket_endpoint(ws)
+            assert ws._close_code == 4001
+            assert not ws._accepted
+        finally:
+            if original:
+                os.environ["JWT_SECRET"] = original
+            else:
+                os.environ.pop("JWT_SECRET", None)

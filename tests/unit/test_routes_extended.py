@@ -418,7 +418,7 @@ class TestBacktestDetail:
         try:
             router = BacktestDetailRouter()
             result = await router.get_regime_breakdown("run1")
-            assert len(result["regimes"]) == 3
+            assert len(result["regimes"]) == 4
             assert result["regimes"][0]["name"] == "calm"
         finally:
             routes_mod._get_db = orig
