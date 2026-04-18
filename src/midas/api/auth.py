@@ -219,8 +219,11 @@ class AuthRouter:
             try:
                 user_row = await db.express.read("users", user_id)
                 users = [user_row] if user_row else []
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "auth.refresh.user_read_failed",
+                    extra={"user_id": user_id, "error": str(exc)},
+                )
         email = users[0].get("email", "") if users else ""
 
         new_access = create_access_token(user_id, email)

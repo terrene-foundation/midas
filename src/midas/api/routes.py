@@ -1073,11 +1073,9 @@ class SettingsRouter:
                 "pending_orders_cancelled": len(pending),
             }
         except Exception as exc:
-            import traceback
-
             logger.error(
                 "kill_switch.activate.failed",
-                extra={"error": str(exc), "trace": traceback.format_exc()},
+                extra={"error": type(exc).__name__},
             )
             raise HTTPException(status_code=500, detail="Kill switch activation failed")
 

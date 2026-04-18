@@ -18,15 +18,29 @@ logger = logging.getLogger(__name__)
 VALID_CHANNELS = {"regime", "decisions", "portfolio", "debate", "pulse", "notifications"}
 
 
+MAX_CONNECTIONS_PER_CHANNEL = 100
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self._connections: dict[str, list[WebSocket]] = {ch: [] for ch in VALID_CHANNELS}
+
+    def _add_to_channel(self, ws: WebSocket, channel: str) -> bool:
+        conns = self._connections.get(channel, [])
+        if len(conns) >= MAX_CONNECTIONS_PER_CHANNEL:
+            logger.warning(
+                "ws.channel_full",
+                extra={"channel": channel, "count": len(conns)},
+            )
+            return False
+        conns.append(ws)
+        return True
 
     async def connect(self, ws: WebSocket, channels: list[str]) -> None:
         await ws.accept()
         for ch in channels:
             if ch in self._connections:
-                self._connections[ch].append(ws)
+                self._add_to_channel(ws, ch)
         logger.info("ws.connect", extra={"channels": channels})
 
     def disconnect(self, ws: WebSocket) -> None:
@@ -87,7 +101,7 @@ class WebSocketRouter:
                 channels = ["regime", "decisions"]
 
             for ch in channels:
-                manager._connections[ch].append(ws)
+                manager._add_to_channel(ws, ch)
 
             await ws.send_json({"type": "connected", "channels": channels})
 
@@ -105,7 +119,7 @@ class WebSocketRouter:
                     for ch in new_chs:
                         if ch not in channels:
                             channels.append(ch)
-                            manager._connections[ch].append(ws)
+                            manager._add_to_channel(ws, ch)
                     await ws.send_json({"type": "subscribed", "channels": channels})
                 elif msg_type == "unsubscribe":
                     drop_chs = msg.get("channels", [])
