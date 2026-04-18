@@ -13,7 +13,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 import midas.api.routes as _routes_module
 
@@ -38,6 +38,14 @@ class OnboardingRouter:
             "/universe-constraints", self.set_universe_constraints, methods=["POST"]
         )
         self.router.add_api_route("/activate", self.activate, methods=["POST"])
+
+    @staticmethod
+    def _resolve_user(request: Request, body: dict[str, Any]) -> str:
+        """Derive user_id from JWT state (preferred) or body fallback (dev mode)."""
+        jwt_user = getattr(request.state, "user", None)
+        if jwt_user and jwt_user.get("sub"):
+            return str(jwt_user["sub"])
+        return str(body.get("user_id") or "default")
 
     async def _get_state(self, db, user_id: str) -> dict[str, Any]:
         rows = await db.express.list(
@@ -66,9 +74,9 @@ class OnboardingRouter:
             },
         )
 
-    async def connect_brokerage(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def connect_brokerage(self, request: Request, body: dict[str, Any]) -> dict[str, Any]:
         logger.info("onboarding.connect_brokerage.start")
-        user_id = str(body.get("user_id") or body.get("sub") or "default")
+        user_id = self._resolve_user(request, body)
         connection_ref = body.get("connection_ref", "")
         if not connection_ref:
             raise HTTPException(status_code=400, detail="connection_ref required")
@@ -82,9 +90,9 @@ class OnboardingRouter:
         logger.info("onboarding.connect_brokerage.ok", extra={"user_id": user_id})
         return {"step": "connect_brokerage", "status": "complete"}
 
-    async def set_risk_profile(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def set_risk_profile(self, request: Request, body: dict[str, Any]) -> dict[str, Any]:
         logger.info("onboarding.risk_profile.start")
-        user_id = str(body.get("user_id") or body.get("sub") or "default")
+        user_id = self._resolve_user(request, body)
         vol_low = body.get("vol_target_low")
         vol_high = body.get("vol_target_high")
         dd_ceiling = body.get("drawdown_ceiling")
@@ -115,9 +123,11 @@ class OnboardingRouter:
         logger.info("onboarding.risk_profile.ok", extra={"user_id": user_id})
         return {"step": "risk_profile", "status": "complete"}
 
-    async def set_universe_constraints(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def set_universe_constraints(
+        self, request: Request, body: dict[str, Any]
+    ) -> dict[str, Any]:
         logger.info("onboarding.universe_constraints.start")
-        user_id = str(body.get("user_id") or body.get("sub") or "default")
+        user_id = self._resolve_user(request, body)
         db = await _get_db()
         if db is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
@@ -132,9 +142,9 @@ class OnboardingRouter:
         logger.info("onboarding.universe_constraints.ok", extra={"user_id": user_id})
         return {"step": "universe_constraints", "status": "complete"}
 
-    async def activate(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def activate(self, request: Request, body: dict[str, Any]) -> dict[str, Any]:
         logger.info("onboarding.activate.start")
-        user_id = str(body.get("user_id") or body.get("sub") or "default")
+        user_id = self._resolve_user(request, body)
         db = await _get_db()
         if db is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
@@ -345,6 +355,7 @@ class NotificationRouter:
         try:
             db = await _get_db()
             if db is None:
+                logger.warning("notifications.attention_report.db_unavailable")
                 return self._empty_report()
             decisions = await db.express.list("decisions")
             return {

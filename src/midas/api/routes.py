@@ -7,6 +7,7 @@ Nexus multi-channel pattern. Routes are async and DataFlow-backed.
 Ref: specs/09 S5-9
 """
 
+import hashlib
 import json
 import logging
 import secrets
@@ -310,17 +311,19 @@ class DecisionsRouter:
         try:
             db = await _get_db()
             if db is not None:
+                # Check decision exists
+                rows = await db.express.list("decisions", filter={"id": decision_id})
+                if not rows:
+                    raise HTTPException(status_code=404, detail="Decision not found")
+                decision = rows[0]
                 # Verify ownership: only the decision owner can approve
                 if user:
-                    rows = await db.express.list("decisions", filter={"id": decision_id})
-                    if rows:
-                        decision = rows[0]
-                        owner_id = decision.get("user_id", "")
-                        if owner_id and owner_id != user.get("sub"):
-                            raise HTTPException(
-                                status_code=403,
-                                detail="Not authorized to approve this decision",
-                            )
+                    owner_id = decision.get("user_id", "")
+                    if owner_id and owner_id != user.get("sub"):
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Not authorized to approve this decision",
+                        )
                 await db.express.update("decisions", decision_id, {"status": "approved"})
             return {"id": decision_id, "status": "approved"}
         except HTTPException:
@@ -342,17 +345,19 @@ class DecisionsRouter:
         try:
             db = await _get_db()
             if db is not None:
+                # Check decision exists
+                rows = await db.express.list("decisions", filter={"id": decision_id})
+                if not rows:
+                    raise HTTPException(status_code=404, detail="Decision not found")
+                decision = rows[0]
                 # Verify ownership: only the decision owner can decline
                 if user:
-                    rows = await db.express.list("decisions", filter={"id": decision_id})
-                    if rows:
-                        decision = rows[0]
-                        owner_id = decision.get("user_id", "")
-                        if owner_id and owner_id != user.get("sub"):
-                            raise HTTPException(
-                                status_code=403,
-                                detail="Not authorized to decline this decision",
-                            )
+                    owner_id = decision.get("user_id", "")
+                    if owner_id and owner_id != user.get("sub"):
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Not authorized to decline this decision",
+                        )
                 await db.express.update("decisions", decision_id, {"status": "declined"})
             return {"id": decision_id, "status": "declined"}
         except HTTPException:
@@ -442,7 +447,9 @@ class DecisionsRouter:
                         await db.express.update("decisions", str(did), {"status": verdict})
                         results.append({"decision_id": did, "status": verdict})
                     except Exception as exc:
-                        results.append({"decision_id": did, "status": "error", "detail": str(exc)})
+                        results.append(
+                            {"decision_id": did, "status": "error", "detail": "Internal error"}
+                        )
         except Exception as exc:
             logger.error("decisions.batch.failed", extra={"error": str(exc)})
         return {"processed": len(results), "results": results}
@@ -624,7 +631,7 @@ class DebateRouter:
                 "debate.invoke_tool.failed",
                 extra={"thread_id": thread_id, "tool_name": tool_name, "error": str(exc)},
             )
-            raise HTTPException(status_code=500, detail=f"Tool invocation failed: {exc}")
+            raise HTTPException(status_code=500, detail="Tool invocation failed")
 
 
 class PortfolioRouter:
@@ -1026,9 +1033,10 @@ class SettingsRouter:
             if ks is None:
                 # Generate code anyway so the clear flow can be tested
                 self._last_confirmation_code = secrets.token_hex(8)
+                code_hash = hashlib.sha256(self._last_confirmation_code.encode()).hexdigest()[:8]
                 logger.warning(
                     "kill_switch.activate.ks_none_path",
-                    confirmation_code=self._last_confirmation_code,
+                    confirmation_code_hash=code_hash,
                 )
                 return {
                     "status": "active",
@@ -1046,10 +1054,16 @@ class SettingsRouter:
                             await db.express.update(
                                 "orders", str(order["id"]), {"status": "cancelled"}
                             )
-                        except Exception:
-                            pass
-                except Exception:
-                    pass  # non-fatal: orders table may not exist
+                        except Exception as order_exc:
+                            logger.warning(
+                                "kill_switch.cancel_order.failed",
+                                extra={"order_id": order.get("id"), "error": str(order_exc)},
+                            )
+                except Exception as list_exc:
+                    logger.warning(
+                        "kill_switch.list_orders.failed",
+                        extra={"error": str(list_exc)},
+                    )
             # Activate kill switch (generates confirmation code)
             result = await ks.activate(reason="user_requested")
             self._last_confirmation_code = result.get("confirmation_code")
@@ -1065,11 +1079,7 @@ class SettingsRouter:
                 "kill_switch.activate.failed",
                 extra={"error": str(exc), "trace": traceback.format_exc()},
             )
-            return {
-                "status": "active",
-                "confirmation_code": self._last_confirmation_code,
-                "pending_orders_cancelled": 0,
-            }
+            raise HTTPException(status_code=500, detail="Kill switch activation failed")
 
     async def clear_kill_switch(self, body: dict[str, Any]) -> dict[str, Any]:
         """Clear kill switch — requires valid confirmation code and user approval.

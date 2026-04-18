@@ -96,6 +96,14 @@ async def _patch_get_db(db):
     return original, routes_mod
 
 
+def _mock_request(user_id: str = "1"):
+    """Create a mock Request with JWT user state."""
+    req = MagicMock()
+    req.state = MagicMock()
+    req.state.user = {"sub": user_id, "email": f"user{user_id}@test.com"}
+    return req
+
+
 # ---------------------------------------------------------------------------
 # T-23-03: Onboarding state machine
 # ---------------------------------------------------------------------------
@@ -109,7 +117,7 @@ class TestOnboarding:
         try:
             router = OnboardingRouter()
             result = await router.connect_brokerage(
-                {"user_id": "1", "connection_ref": "broker-abc"}
+                _mock_request(), {"user_id": "1", "connection_ref": "broker-abc"}
             )
             assert result["step"] == "connect_brokerage"
             assert result["status"] == "complete"
@@ -120,7 +128,7 @@ class TestOnboarding:
     async def test_connect_brokerage_missing_ref(self):
         router = OnboardingRouter()
         with pytest.raises(Exception) as exc_info:
-            await router.connect_brokerage({"user_id": "1"})
+            await router.connect_brokerage(_mock_request(), {"user_id": "1"})
         assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -131,11 +139,8 @@ class TestOnboarding:
             router = OnboardingRouter()
             with pytest.raises(Exception) as exc_info:
                 await router.set_risk_profile(
-                    {
-                        "user_id": "1",
-                        "vol_target_low": 0.1,
-                        "vol_target_high": 0.3,
-                    }
+                    _mock_request(),
+                    {"user_id": "1", "vol_target_low": 0.1, "vol_target_high": 0.3},
                 )
             assert exc_info.value.status_code == 409
         finally:
@@ -146,11 +151,7 @@ class TestOnboarding:
         router = OnboardingRouter()
         with pytest.raises(Exception) as exc_info:
             await router.set_risk_profile(
-                {
-                    "user_id": "1",
-                    "vol_target_low": 0.5,
-                    "vol_target_high": 0.2,
-                }
+                _mock_request(), {"user_id": "1", "vol_target_low": 0.5, "vol_target_high": 0.2}
             )
         assert exc_info.value.status_code == 400
 
@@ -160,18 +161,20 @@ class TestOnboarding:
         orig, routes_mod = await _patch_get_db(db)
         try:
             router = OnboardingRouter()
-            await router.connect_brokerage({"user_id": "1", "connection_ref": "brk"})
+            req = _mock_request()
+            await router.connect_brokerage(req, {"user_id": "1", "connection_ref": "brk"})
             await router.set_risk_profile(
+                req,
                 {
                     "user_id": "1",
                     "vol_target_low": 0.1,
                     "vol_target_high": 0.3,
                     "drawdown_ceiling": 0.15,
                     "concentration_cap": 0.20,
-                }
+                },
             )
-            await router.set_universe_constraints({"user_id": "1", "sectors": ["tech"]})
-            result = await router.activate({"user_id": "1"})
+            await router.set_universe_constraints(req, {"user_id": "1", "sectors": ["tech"]})
+            result = await router.activate(req, {"user_id": "1"})
             assert result["status"] == "active"
             assert result["mode"] == "paper"
         finally:
@@ -184,7 +187,7 @@ class TestOnboarding:
         try:
             router = OnboardingRouter()
             with pytest.raises(Exception) as exc_info:
-                await router.activate({"user_id": "1"})
+                await router.activate(_mock_request(), {"user_id": "1"})
             assert exc_info.value.status_code == 409
             assert "connect_brokerage" in exc_info.value.detail
         finally:
