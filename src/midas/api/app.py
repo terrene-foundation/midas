@@ -7,6 +7,7 @@ Follows Kailash Nexus patterns for multi-channel deployment.
 Ref: specs/09, specs/10, specs/11 S6.2 (JWT auth)
 """
 
+import hmac
 import logging
 import os
 from typing import Any
@@ -27,6 +28,16 @@ from midas.api.routes import (
     SettingsRouter,
     SignalRouter,
 )
+from midas.api.routes_extended import (
+    BacktestDetailRouter,
+    DebateResolutionRouter,
+    DecisionModifyRouter,
+    NotificationRouter,
+    OnboardingRouter,
+    PaperLiveRouter,
+    PositionHistoryRouter,
+)
+from midas.api.websocket import WebSocketRouter
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +110,7 @@ def create_app(
                 token = auth[7:]
             else:
                 token = auth
-            if token != legacy_key:
+            if not hmac.compare_digest(token, legacy_key):
                 logger.warning("auth.unauthorized", extra={"path": path})
                 raise HTTPException(status_code=401, detail="Invalid or missing API key")
             return await call_next(request)
@@ -140,6 +151,32 @@ def create_app(
 
     audit = AuditRouter()
     app.include_router(audit.router, prefix="/api/v1/audit", tags=["audit"])
+
+    onboarding = OnboardingRouter()
+    app.include_router(onboarding.router, prefix="/api/v1/onboarding", tags=["onboarding"])
+
+    decision_modify = DecisionModifyRouter()
+    app.include_router(decision_modify.router, prefix="/api/v1/decisions", tags=["decisions"])
+
+    debate_resolution = DebateResolutionRouter()
+    app.include_router(debate_resolution.router, prefix="/api/v1/debate", tags=["debate"])
+
+    notifications = NotificationRouter()
+    app.include_router(
+        notifications.router, prefix="/api/v1/settings/notifications", tags=["notifications"]
+    )
+
+    backtest_detail = BacktestDetailRouter()
+    app.include_router(backtest_detail.router, prefix="/api/v1/backtest", tags=["backtest"])
+
+    paper_live = PaperLiveRouter()
+    app.include_router(paper_live.router, prefix="/api/v1/settings/paper-live", tags=["paper-live"])
+
+    position_history = PositionHistoryRouter()
+    app.include_router(position_history.router, prefix="/api/v1/portfolio", tags=["portfolio"])
+
+    ws = WebSocketRouter()
+    app.include_router(ws.router, prefix="/api/v1", tags=["websocket"])
 
     @app.on_event("startup")
     async def startup() -> None:

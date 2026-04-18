@@ -17,7 +17,7 @@ from typing import Any
 import jwt
 from fastapi import APIRouter, HTTPException, Request
 
-from midas.api.routes import _get_db
+import midas.api.routes as _routes_module
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,10 @@ def _get_jwt_secret() -> str:
     if _JWT_SECRET is None:
         _JWT_SECRET = os.environ.get("JWT_SECRET", "")
         if not _JWT_SECRET:
-            logger.warning("auth.jwt_secret_missing")
-            _JWT_SECRET = "dev-only-secret-do-not-use-in-production"
+            raise RuntimeError(
+                "JWT_SECRET environment variable is not set. "
+                "Set it to a cryptographically random string (min 32 chars)."
+            )
     return _JWT_SECRET
 
 
@@ -123,7 +125,7 @@ class AuthRouter:
         if not email or not password:
             raise HTTPException(status_code=400, detail="Email and password required")
 
-        db = await _get_db()
+        db = await _routes_module._get_db()
         if db is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
 
@@ -173,7 +175,7 @@ class AuthRouter:
         if not old_refresh:
             raise HTTPException(status_code=400, detail="Refresh token required")
 
-        db = await _get_db()
+        db = await _routes_module._get_db()
         if db is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
 
@@ -205,9 +207,7 @@ class AuthRouter:
                 pass
 
         # Revoke old session
-        await db.express.update(
-            "sessions", str(session["id"]), {"revoked_at": now.isoformat()}
-        )
+        await db.express.update("sessions", str(session["id"]), {"revoked_at": now.isoformat()})
 
         # Get user for new access token
         user_id = str(session.get("user_id", ""))
@@ -249,7 +249,7 @@ class AuthRouter:
 
         logger.info("auth.logout.start")
 
-        db = await _get_db()
+        db = await _routes_module._get_db()
         if db is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
 
@@ -294,7 +294,7 @@ class AuthRouter:
         user_id = payload.get("sub", "")
         email = payload.get("email", "")
 
-        db = await _get_db()
+        db = await _routes_module._get_db()
         if db is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
 
@@ -374,8 +374,14 @@ async def verify_jwt_or_pass(request: Request) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-async def seed_default_user(db, email: str = "admin@midas.local", password: str = "admin") -> None:
-    """Create the default admin user if no users exist."""
+async def seed_default_user(db, email: str, password: str) -> None:
+    """Create the default admin user if no users exist.
+
+    Args:
+        db: DataFlow instance
+        email: Admin user email (required - no default)
+        password: Admin password (required - no default; use strong password)
+    """
     users = await db.express.list("users")
     if users:
         return

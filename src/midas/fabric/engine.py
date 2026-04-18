@@ -240,6 +240,7 @@ def _register_models(db: DataFlow) -> None:
         model_version: str = ""
         z_t_snapshot: str = ""
         created_at_day: str = ""
+        user_id: str = ""  # Owner of the decision; required for authorization
 
     # -- 14. shadow_decisions ------------------------------------------------
     @db.model

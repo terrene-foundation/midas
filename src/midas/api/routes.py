@@ -13,9 +13,10 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from midas.agents.tools import DebateTools
+import os
 from midas.compliance.kill_switch import KillSwitch
 from midas.fabric.engine import get_fabric
 from midas.regime import RegimeRenderer
@@ -298,28 +299,64 @@ class DecisionsRouter:
                 "rationale": "",
             }
 
-    async def approve(self, decision_id: str) -> dict[str, Any]:
-        """Approve a pending decision. Requires re-authentication."""
+    async def approve(self, decision_id: str, request: Request) -> dict[str, Any]:
+        """Approve a pending decision. Requires re-authentication and decision ownership."""
         logger.info("decision.approve", extra={"decision_id": decision_id})
+        user = getattr(request.state, "user", None)
+        auth_required = bool(os.environ.get("JWT_SECRET", ""))
+        if auth_required and not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
         try:
             db = await _get_db()
             if db is not None:
+                # Verify ownership: only the decision owner can approve
+                if user:
+                    rows = await db.express.list("decisions", filter={"id": decision_id})
+                    if rows:
+                        decision = rows[0]
+                        owner_id = decision.get("user_id", "")
+                        if owner_id and owner_id != user.get("sub"):
+                            raise HTTPException(
+                                status_code=403,
+                                detail="Not authorized to approve this decision",
+                            )
                 await db.express.update("decisions", decision_id, {"status": "approved"})
             return {"id": decision_id, "status": "approved"}
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(
                 "decision.approve.failed", extra={"decision_id": decision_id, "error": str(exc)}
             )
             return {"id": decision_id, "status": "approved"}
 
-    async def decline(self, decision_id: str) -> dict[str, Any]:
-        """Decline a pending decision."""
+    async def decline(self, decision_id: str, request: Request) -> dict[str, Any]:
+        """Decline a pending decision. Requires re-authentication and decision ownership."""
         logger.info("decision.decline", extra={"decision_id": decision_id})
+        user = getattr(request.state, "user", None)
+        auth_required = bool(os.environ.get("JWT_SECRET", ""))
+        if auth_required and not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
         try:
             db = await _get_db()
             if db is not None:
+                # Verify ownership: only the decision owner can decline
+                if user:
+                    rows = await db.express.list("decisions", filter={"id": decision_id})
+                    if rows:
+                        decision = rows[0]
+                        owner_id = decision.get("user_id", "")
+                        if owner_id and owner_id != user.get("sub"):
+                            raise HTTPException(
+                                status_code=403,
+                                detail="Not authorized to decline this decision",
+                            )
                 await db.express.update("decisions", decision_id, {"status": "declined"})
             return {"id": decision_id, "status": "declined"}
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(
                 "decision.decline.failed", extra={"decision_id": decision_id, "error": str(exc)}
