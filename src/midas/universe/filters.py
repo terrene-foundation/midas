@@ -61,16 +61,21 @@ async def filter_sp1500_constituents(
                 volumes = [float(r.get("volume", 0)) for r in price_rows]
                 price = closes[-1] if closes else 0.0
                 avg_daily_volume = sum(volumes) / len(volumes) if volumes else 0.0
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("sp1500.price_fetch_failed", ticker=ticker, error=str(exc))
 
         try:
             fund_rows = await universe_adapter._db.express.list(
                 "fundamentals", filter={"ticker": ticker}
             )
             has_fundamentals = len(fund_rows) > 0
-        except Exception:
-            pass
+            if fund_rows:
+                shares_vals = [
+                    float(r["shares_outstanding"]) for r in fund_rows if r.get("shares_outstanding")
+                ]
+                shares_outstanding = shares_vals[-1] if shares_vals else 0.0
+        except Exception as exc:
+            logger.warning("sp1500.fundamentals_fetch_failed", ticker=ticker, error=str(exc))
 
         candidate = SP1500Candidate(
             ticker=ticker,

@@ -182,7 +182,7 @@ class ResearchAgent:
             filings_rows = await self._db.express.list("filings", filter=filings_filter or None)
             for row in filings_rows:
                 row["source_type"] = "filing"
-                row["similarity"] = 0.5
+                row["similarity"] = self._keyword_similarity(query, row)
                 documents.append(row)
         except Exception as exc:
             logger.warning("research.filings_query_failed", error=str(exc))

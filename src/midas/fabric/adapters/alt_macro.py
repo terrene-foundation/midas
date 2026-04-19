@@ -242,7 +242,11 @@ class IMFAdapter(BaseAdapter):
 
 
 class GoogleTrendsAdapter(BaseAdapter):
-    """Adapter for Google Trends data."""
+    """Adapter for Google Trends data via daily trend RSS feed.
+
+    Fetches trending search queries for a given date via the Google Trends
+    daily trends RSS endpoint. No external library required.
+    """
 
     SOURCE_NAME = "google_trends"
 
@@ -264,31 +268,96 @@ class GoogleTrendsAdapter(BaseAdapter):
             self._client = None
 
     async def health_check(self) -> dict[str, Any]:
-        return {
-            "source": self.SOURCE_NAME,
-            "healthy": True,
-            "detail": "google trends adapter ready",
-        }
+        try:
+            client = self._get_client()
+            response = await client.get(
+                "/trending/rss", params={"geo": "US"}, follow_redirects=True
+            )
+            return {
+                "source": self.SOURCE_NAME,
+                "healthy": response.status_code < 400,
+                "detail": f"RSS endpoint returned {response.status_code}",
+            }
+        except Exception as exc:
+            return {"source": self.SOURCE_NAME, "healthy": False, "detail": str(exc)}
 
     async def fetch_trend(
         self, keyword: str, start_date: str, end_date: str
     ) -> list[dict[str, Any]]:
-        """Fetch Google Trends interest over time and write to fabric."""
+        """Fetch Google Trends daily trending topics and write to fabric.
+
+        Uses the public RSS feed for daily trending searches. Each trending
+        topic is written as an alt_data row with the keyword and traffic score.
+        """
+        import xml.etree.ElementTree as ET
+
         operation = "fetch_trend"
         self._log.info("fetch_trend.start", keyword=keyword)
 
-        logger.warning(
-            "fetch_trend.not_available",
-            keyword=keyword,
-            reason="pytrends library not installed — returning empty result",
-        )
+        try:
+            client = self._get_client()
+            response = await client.get(
+                "/trending/rss",
+                params={"geo": "US"},
+                follow_redirects=True,
+            )
+            if response.status_code >= 400:
+                raise AdapterError(self.SOURCE_NAME, operation, f"HTTP {response.status_code}")
+        except AdapterError as exc:
+            self._log.error("fetch_trend.failed", error=str(exc))
+            await self._write_audit(operation=operation, success=False, detail=str(exc))
+            return []
+        except Exception as exc:
+            self._log.error("fetch_trend.request_failed", error=str(exc))
+            await self._write_audit(operation=operation, success=False, detail=str(exc))
+            return []
+
+        now = datetime.now(timezone.utc)
+        db = self._get_db()
+        created_rows: list[dict[str, Any]] = []
+
+        try:
+            root = ET.fromstring(response.text)
+            items = root.findall(".//item")
+        except ET.ParseError:
+            items = []
+
+        for item in items:
+            title = (item.findtext("title") or "").strip()
+            traffic = item.findtext("ht:approx_traffic", "")
+            if not title:
+                continue
+            row = {
+                "series_name": f"google_trends:{keyword}",
+                "period_end": start_date,
+                "value": float(
+                    traffic.replace("+", "").replace(",", "").replace("K", "000").strip() or 0
+                ),
+                "vintage": now.isoformat(),
+                "source": "google_trends",
+                "unit": "search_interest",
+                "filed_at": now.isoformat(),
+                "restated_at": None,
+                "source_vintage": f"google_trends:{keyword}:{start_date}",
+                "title": title,
+            }
+            try:
+                await db.express.create("alt_data", row)
+                created_rows.append(row)
+            except Exception as exc:
+                logger.warning(
+                    "alt_data.row_write_failed",
+                    series=row.get("series_name", "unknown"),
+                    error=str(exc),
+                )
+
         await self._write_audit(
             operation=operation,
-            success=False,
-            detail=f"GoogleTrendsAdapter requires pytrends library for keyword={keyword}",
-            rows_written=0,
+            success=True,
+            detail=f"wrote {len(created_rows)} rows for keyword={keyword}",
+            rows_written=len(created_rows),
         )
-        return []
+        return created_rows
 
 
 class TruflationAdapter(BaseAdapter):

@@ -1164,10 +1164,11 @@ class TestKillSwitch:
         from midas.compliance.kill_switch import KillSwitch
 
         ks = KillSwitch(started_db)
-        await ks.activate(reason="test")
+        activate_result = await ks.activate(reason="test")
         result = await ks.clear(
             user_approved=True,
-            state_brief={"drawdown": 0.03, "pool_disagreement": 0.1},
+            state_brief={"drawdown_state": "3%", "pool_disagreement": 0.1},
+            confirmation_code=activate_result["confirmation_code"],
         )
         assert result["cleared"] is True
         assert result["revert_level"] == 1  # Always reverts to L1
@@ -1178,10 +1179,11 @@ class TestKillSwitch:
         from midas.compliance.kill_switch import KillSwitch
 
         ks = KillSwitch(started_db)
-        await ks.activate(reason="test")
+        activate_result = await ks.activate(reason="test")
         result = await ks.clear(
             user_approved=True,
-            state_brief={"drawdown": 0.03},
+            state_brief={"drawdown_state": "3%", "pool_disagreement": 0.1},
+            confirmation_code=activate_result["confirmation_code"],
         )
         assert "conditions" in result
         assert isinstance(result["conditions"], list)
@@ -1208,10 +1210,11 @@ class TestKillSwitch:
         from midas.compliance.kill_switch import KillSwitch
 
         ks = KillSwitch(started_db)
-        await ks.activate(reason="test")
+        activate_result = await ks.activate(reason="test")
         await ks.clear(
             user_approved=True,
-            state_brief={"drawdown": 0.03},
+            state_brief={"drawdown_state": "3%", "pool_disagreement": 0.1},
+            confirmation_code=activate_result["confirmation_code"],
         )
         rows = await started_db.express.list("audit_log")
         # At least 2: activate + clear

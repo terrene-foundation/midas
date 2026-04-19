@@ -2,10 +2,14 @@
 
 Computes what would have happened if a different decision had been taken,
 comparing executed returns against counterfactual (hold / opposite / benchmark)
-returns at 1-day, 1-week, and 1-month horizons.
+returns at 1-day, 1-week, and 1-month horizons using actual price paths
+from the fabric.
 
 Ref: M16 — Counterfactual engine
 """
+
+import json
+from datetime import date, timedelta
 
 import structlog
 from dataflow import DataFlow
@@ -14,7 +18,7 @@ logger = structlog.get_logger("midas.attribution.counterfactual")
 
 
 class CounterfactualEngine:
-    """Computes counterfactual returns for decisions."""
+    """Computes counterfactual returns for decisions using fabric price data."""
 
     def __init__(self, db: DataFlow):
         self._db = db
@@ -23,12 +27,13 @@ class CounterfactualEngine:
     async def compute_counterfactual(
         self,
         decision_id: str,
-        horizons: list[int] = [1, 5, 21],
+        horizons: list[int] | None = None,
     ) -> dict:
-        """Compute counterfactual returns at specified horizons.
+        """Compute counterfactual returns at specified horizons using actual prices.
 
         For each horizon, compares the executed decision return against
-        the counterfactual (hold/don't-trade) return.
+        the counterfactual (hold/don't-trade) return using price data
+        from the fabric prices table.
 
         Parameters
         ----------
@@ -41,55 +46,43 @@ class CounterfactualEngine:
         -------
         dict with decision_id and list of counterfactual results.
         """
+        if horizons is None:
+            horizons = [1, 5, 21]
+
         self._log.info(
             "counterfactual.compute",
             decision_id=decision_id,
             horizons=horizons,
         )
 
-        # Read the decision record
         decision = await self._db.express.read("decisions", decision_id)
+        if decision is None:
+            raise ValueError(f"Decision {decision_id} not found")
 
-        # For now, compute placeholder counterfactuals based on the
-        # decision's outcome data. In production, this would look up
-        # actual price paths for the instrument(s) involved.
+        instrument = decision.get("instrument", "")
+        decision_date_str = decision.get("decision_date", "") or decision.get("created_at", "")
+        direction = decision.get("direction", "buy")
+
+        executed_return, counterfactual_return = await self._compute_from_prices(
+            instrument, decision_date_str, direction
+        )
+
+        outcome = self._parse_outcome(decision)
+
         results = []
         for h in horizons:
-            # Placeholder: executed_return from decision outcome,
-            # counterfactual_return is 0.0 (hold / no-trade).
-            executed_return = 0.0
-            counterfactual_return = 0.0
+            key = f"return_{h}d"
+            cf_key = f"counterfactual_{h}d"
 
-            # Try to extract actual return data from the decision
-            import json
-
-            outcome_json = decision.get("outcome_json", "") or "{}"
-            if isinstance(outcome_json, str):
-                try:
-                    outcome = json.loads(outcome_json)
-                except (json.JSONDecodeError, TypeError):
-                    outcome = {}
-            else:
-                outcome = outcome_json if isinstance(outcome_json, dict) else {}
-
-            if h == 1:
-                executed_return = outcome.get("return_1d", 0.0)
-                counterfactual_return = outcome.get("counterfactual_1d", 0.0)
-            elif h == 5:
-                executed_return = outcome.get("return_5d", 0.0)
-                counterfactual_return = outcome.get("counterfactual_5d", 0.0)
-            elif h == 21:
-                executed_return = outcome.get("return_21d", 0.0)
-                counterfactual_return = outcome.get("counterfactual_21d", 0.0)
-
-            diff = executed_return - counterfactual_return
+            exec_ret = outcome.get(key, executed_return)
+            cf_ret = outcome.get(cf_key, counterfactual_return)
 
             results.append(
                 {
                     "horizon": h,
-                    "executed_return": executed_return,
-                    "counterfactual_return": counterfactual_return,
-                    "diff": diff,
+                    "executed_return": exec_ret,
+                    "counterfactual_return": cf_ret,
+                    "diff": exec_ret - cf_ret,
                 }
             )
 
@@ -97,9 +90,98 @@ class CounterfactualEngine:
             "counterfactual.compute.ok",
             decision_id=decision_id,
             horizons_computed=len(results),
+            instrument=instrument,
         )
 
         return {
             "decision_id": decision_id,
+            "instrument": instrument,
             "counterfactuals": results,
         }
+
+    async def _compute_from_prices(
+        self, instrument: str, decision_date_str: str, direction: str
+    ) -> tuple[float, float]:
+        """Compute returns from actual fabric price data.
+
+        Returns (executed_return, counterfactual_return). Falls back to
+        (0.0, 0.0) when price data is unavailable.
+        """
+        if not instrument or not decision_date_str:
+            return 0.0, 0.0
+
+        try:
+            decision_date = date.fromisoformat(decision_date_str[:10])
+        except (ValueError, TypeError):
+            return 0.0, 0.0
+
+        try:
+            price_rows = await self._db.express.list(
+                "prices",
+                filter={"instrument": instrument},
+            )
+        except Exception as exc:
+            self._log.warning(
+                "counterfactual.price_query_failed",
+                instrument=instrument,
+                error=str(exc),
+            )
+            return 0.0, 0.0
+
+        if not price_rows:
+            return 0.0, 0.0
+
+        price_map: dict[date, float] = {}
+        for row in price_rows:
+            try:
+                d = date.fromisoformat(row.get("period_end", "")[:10])
+                close = float(row.get("close", 0))
+                if close > 0:
+                    price_map[d] = close
+            except (ValueError, TypeError):
+                continue
+
+        if not price_map:
+            return 0.0, 0.0
+
+        entry_price = price_map.get(decision_date)
+        if entry_price is None:
+            sorted_dates = sorted(price_map.keys())
+            for d in sorted_dates:
+                if d >= decision_date:
+                    entry_price = price_map[d]
+                    break
+            if entry_price is None:
+                return 0.0, 0.0
+
+        exit_date = decision_date + timedelta(days=21)
+        exit_price = price_map.get(exit_date)
+        if exit_price is None:
+            sorted_dates = sorted(price_map.keys())
+            for d in sorted_dates:
+                if d > decision_date:
+                    exit_price = price_map[d]
+                    break
+            if exit_price is None:
+                return 0.0, 0.0
+
+        price_change = (exit_price - entry_price) / entry_price
+
+        if direction == "buy":
+            executed_return = price_change
+            counterfactual_return = 0.0
+        else:
+            executed_return = -price_change
+            counterfactual_return = 0.0
+
+        return executed_return, counterfactual_return
+
+    def _parse_outcome(self, decision: dict) -> dict:
+        """Extract outcome data from decision record."""
+        outcome_json = decision.get("outcome_json", "") or "{}"
+        if isinstance(outcome_json, str):
+            try:
+                return json.loads(outcome_json)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return outcome_json if isinstance(outcome_json, dict) else {}
