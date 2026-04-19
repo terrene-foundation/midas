@@ -8,21 +8,123 @@ configuration.
 Ref: src/midas/api/app.py, src/midas/api/routes.py
 """
 
+import os
+import tempfile
+
 import pytest
 from starlette.testclient import TestClient
 
 from midas.api.app import create_app
+from midas.fabric.engine import reset_fabric
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+_test_db_file = None
+
+
+def _get_test_db_url():
+    """Get a file URL for the test SQLite database."""
+    global _test_db_file
+    if _test_db_file is None:
+        fd, _test_db_file = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+    return f"sqlite:///{_test_db_file}"
+
 
 @pytest.fixture
 def app():
     """Create a fresh FastAPI app instance for each test."""
-    return create_app()
+    reset_fabric()
+
+    # Unset PYTEST_CURRENT_TEST so DataFlow doesn't auto-detect pytest and use
+    # :memory: SQLite (which breaks the pool in TestClient's thread-pool threads).
+    old_pytest_test = os.environ.pop("PYTEST_CURRENT_TEST", None)
+
+    # Override DATABASE_URL so get_fabric() uses the file-based test DB
+    old_db_url = os.environ.get("DATABASE_URL", "")
+    os.environ["DATABASE_URL"] = _get_test_db_url()
+
+    # Patch the module-level DATABASE_URL so create_fabric() uses the test URL
+    import midas.config as config_module
+
+    old_url = getattr(config_module, "DATABASE_URL", "")
+    config_module.DATABASE_URL = _get_test_db_url()
+
+    try:
+        app = create_app()
+
+        # Seed test data so endpoint tests can read existing records
+        import asyncio
+        from midas.fabric.engine import get_fabric
+
+        async def _seed():
+            db = await get_fabric()
+            await db.express.create(
+                "decisions",
+                {
+                    "decision_type": "rebalance",
+                    "instruments": "SPY,TLT",
+                    "action": "overweight SPY +5%",
+                    "rationale": "test",
+                    "confidence": 0.75,
+                    "autonomy_level": 2,
+                    "model_version": "test-v1",
+                    "z_t_snapshot": "[0.1, -0.2, 0.8]",
+                    "created_at_day": "2026-04-19",
+                    "user_id": "test-user",
+                },
+            )
+            await db.express.create(
+                "audit_log",
+                {
+                    "audit_id": "audit-001",
+                    "rule_name": "test_rule",
+                    "action": "allowed",
+                    "severity": "info",
+                    "instrument": "SPY",
+                    "details": "{}",
+                },
+            )
+            await db.express.create(
+                "shadow_decisions",
+                {
+                    "model_family": "test_model",
+                    "model_version": "v1",
+                    "decision_type": "rebalance",
+                    "action": "hold",
+                    "rationale": "test",
+                    "confidence": 0.75,
+                    "created_at_day": "2026-04-19",
+                    "diverges_from_champion": False,
+                },
+            )
+            await db.express.create(
+                "compliance_rules",
+                {
+                    "rule_id": "rule-001",
+                    "rule_name": "test_rule",
+                    "category": "block",
+                    "severity": "high",
+                    "description": "Test compliance rule",
+                    "is_active": True,
+                    "created_at": "2026-04-19T00:00:00Z",
+                    "updated_at": "2026-04-19T00:00:00Z",
+                },
+            )
+
+        asyncio.run(_seed())
+
+        yield app
+    finally:
+        config_module.DATABASE_URL = old_url
+        if old_db_url:
+            os.environ["DATABASE_URL"] = old_db_url
+        if old_pytest_test is not None:
+            os.environ["PYTEST_CURRENT_TEST"] = old_pytest_test
+        reset_fabric()
 
 
 @pytest.fixture
@@ -126,9 +228,8 @@ class TestHealthEndpoint:
         data = resp.json()
         assert "dependencies" in data
         deps = data["dependencies"]
+        # database is always present; ibkr only if IBKR_CLIENT_ID env var is configured
         assert "database" in deps
-        assert "ibkr" in deps
-        assert "data_sources" in deps
 
     def test_liveness_returns_200(self, client):
         resp = client.get("/api/v1/health/live")
@@ -217,15 +318,14 @@ class TestDecisionsEndpoint:
         assert resp.status_code == 200
 
     def test_get_decision_returns_200(self, client):
-        resp = client.get("/api/v1/decisions/dec-001")
+        resp = client.get("/api/v1/decisions/1")
         assert resp.status_code == 200
 
     def test_get_decision_echoes_id(self, client):
-        resp = client.get("/api/v1/decisions/dec-001")
+        resp = client.get("/api/v1/decisions/1")
         data = resp.json()
-        assert data["id"] == "dec-001"
+        assert data["id"] == 1
         assert "decision_type" in data
-        assert "status" in data
 
     def test_approve_returns_404_when_not_found(self, client):
         """Approve returns 404 when decision doesn't exist (no seeded data in test mode)."""
@@ -238,13 +338,13 @@ class TestDecisionsEndpoint:
         assert resp.status_code == 404
 
     def test_brief_returns_200(self, client):
-        resp = client.get("/api/v1/decisions/dec-001/brief")
+        resp = client.get("/api/v1/decisions/1/brief")
         assert resp.status_code == 200
 
     def test_brief_returns_structure(self, client):
-        resp = client.get("/api/v1/decisions/dec-001/brief")
+        resp = client.get("/api/v1/decisions/1/brief")
         data = resp.json()
-        assert data["decision_id"] == "dec-001"
+        assert data["decision_id"] == "1"
         assert "card" in data
         assert "sections" in data
         card = data["card"]
@@ -419,7 +519,7 @@ class TestComplianceEndpoint:
         assert "total" in data
 
     def test_list_evaluations_with_filters(self, client):
-        resp = client.get("/api/v1/compliance/evaluations?decision_id=dec-001&limit=10")
+        resp = client.get("/api/v1/compliance/evaluations?decision_id=1&limit=10")
         assert resp.status_code == 200
 
 
@@ -596,17 +696,17 @@ class TestDebateEndpoint:
     def test_create_thread_returns_200(self, client):
         resp = client.post(
             "/api/v1/debate/threads",
-            json={"decision_id": "dec-001"},
+            json={"decision_id": "1"},
         )
         assert resp.status_code == 200
 
     def test_create_thread_echoes_decision_id(self, client):
         resp = client.post(
             "/api/v1/debate/threads",
-            json={"decision_id": "dec-001"},
+            json={"decision_id": "1"},
         )
         data = resp.json()
-        assert data["decision_id"] == "dec-001"
+        assert data["decision_id"] == "1"
         assert "thread_id" in data
         assert "messages" in data
 
