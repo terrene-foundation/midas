@@ -97,6 +97,39 @@ class EnvelopeStore:
         self._log = logger.bind(component="EnvelopeStore")
         self._envelope: InvestmentEnvelope = InvestmentEnvelope()
 
+    async def load_from_db(self) -> None:
+        """Load the most recent persisted envelope from the audit_log.
+
+        Looks for the most recent envelope_update action in audit_log and
+        restores the envelope from its details. If no persisted envelope
+        exists, the default envelope is retained.
+        """
+        try:
+            rows = await self._db.express.list(
+                "audit_log",
+                filter={"rule_name": "envelope_update"},
+            )
+            if rows:
+                # Most recent is last
+                latest = rows[-1]
+                details_str = latest.get("details", "{}")
+                try:
+                    details = json.loads(details_str)
+                    env_data = details.get("envelope", {})
+                    if env_data:
+                        self._envelope = InvestmentEnvelope.from_dict(env_data)
+                        self._log.info(
+                            "envelope.loaded_from_db",
+                            drawdown_ceiling=self._envelope.drawdown_ceiling,
+                        )
+                except (json.JSONDecodeError, TypeError):
+                    self._log.warning(
+                        "envelope.load_from_db.parse_error",
+                        details=details_str[:200],
+                    )
+        except Exception as exc:
+            self._log.warning("envelope.load_from_db.error", error=str(exc))
+
     async def get_envelope(self) -> InvestmentEnvelope:
         """Read current envelope.
 

@@ -14,23 +14,43 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any
 
+from dataflow import DataFlow
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from midas.agents.tools import DebateTools
 import os
+from midas.compliance import RulesEngine, create_blocking_rules
 from midas.compliance.kill_switch import KillSwitch
 from midas.fabric.engine import get_fabric
 from midas.regime import RegimeRenderer
+
+# Lazy-initialized compliance engine for pre-trade checks
+_compliance_engine: RulesEngine | None = None
+
+
+def _get_compliance_engine() -> RulesEngine:
+    """Get or create the singleton compliance engine."""
+    global _compliance_engine
+    if _compliance_engine is None:
+        _compliance_engine = RulesEngine(DataFlow(":memory:"))
+        _compliance_engine.register_rules(create_blocking_rules())
+    return _compliance_engine
+
 
 logger = logging.getLogger(__name__)
 
 
 async def _get_db():
-    """Get fabric DB, returning None if unavailable."""
+    """Get fabric DB, raising HTTPException(503) if unavailable."""
     try:
-        return await get_fabric()
+        db = await get_fabric()
+        if db is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+        return db
+    except HTTPException:
+        raise
     except Exception:
-        return None
+        raise HTTPException(status_code=503, detail="Database unavailable")
 
 
 class HealthRouter:
@@ -43,34 +63,64 @@ class HealthRouter:
         self.router.add_api_route("/ready", self.readiness, methods=["GET"])
 
     async def health(self) -> dict[str, Any]:
-        """Full health check with dependency status."""
+        """Full health check with dependency status.
+
+        Wires HealthCheckOrchestrator to check all registered data source adapters.
+        Per spec 11 §7.1: health check runs every minute to detect stalled jobs.
+        """
         import os
 
         deps: dict[str, str] = {}
         overall = "healthy"
 
+        # Database check — use try/except since _get_db raises 503 on failure
         try:
             db = await _get_db()
-            if db:
-                deps["database"] = "configured"
-            else:
-                deps["database"] = "not_configured"
-                overall = "degraded"
-        except Exception as exc:
-            deps["database"] = f"error: {exc}"
+            deps["database"] = "connected" if db else "unavailable"
+        except HTTPException:
+            deps["database"] = "unavailable"
+            overall = "degraded"
+        except Exception:
+            deps["database"] = "unavailable"
             overall = "degraded"
 
-        ibkr_key = os.environ.get("IBKR_CLIENT_ID", "")
-        deps["ibkr"] = "configured" if ibkr_key else "not_configured"
+        # Wire HealthCheckOrchestrator to check all registered data source adapters
+        try:
+            from midas.fabric.health import HealthCheckOrchestrator
+            from midas.fabric.adapters.eodhd import EODHDAdapter
+            from midas.fabric.adapters.fred import FREDAdapter
+            from midas.fabric.adapters.perplexity import PerplexityAdapter
+            from midas.fabric.adapters.ibkr import IBKRAdapter
 
-        data_keys = [
-            os.environ.get("EODHD_API_KEY", ""),
-            os.environ.get("FRED_API_KEY", ""),
-            os.environ.get("PERPLEXITY_API_KEY", ""),
-        ]
-        configured_count = sum(1 for k in data_keys if k)
-        deps["data_sources"] = f"{configured_count}/{len(data_keys)}_configured"
-        if configured_count == 0:
+            orch = HealthCheckOrchestrator()
+
+            for key, adapter_cls, kwargs in [
+                ("EODHD_API_KEY", EODHDAdapter, lambda k: {"api_key": k}),
+                ("FRED_API_KEY", FREDAdapter, lambda k: {"api_key": k}),
+                ("PERPLEXITY_API_KEY", PerplexityAdapter, lambda k: {"api_key": k}),
+            ]:
+                val = os.environ.get(key, "")
+                if val:
+                    orch.register(
+                        adapter_cls.__name__.replace("Adapter", "").lower(),
+                        adapter_cls(**kwargs(val)),
+                    )
+
+            ibkr_id = os.environ.get("IBKR_CLIENT_ID", "")
+            if ibkr_id:
+                ibkr_acc = os.environ.get("IBKR_ACCOUNT_ID", "")
+                orch.register("ibkr", IBKRAdapter(client_id=ibkr_id, account_id=ibkr_acc))
+
+            adapter_results = await orch.check_all()
+
+            for adapter_name, result in adapter_results.items():
+                is_healthy = result.get("healthy", False)
+                deps[adapter_name] = "healthy" if is_healthy else "unhealthy"
+                if not is_healthy:
+                    overall = "degraded"
+
+        except Exception as exc:
+            logger.warning("health.adapter_check_failed", extra={"error": str(exc)})
             overall = "degraded"
 
         return {
@@ -324,6 +374,42 @@ class DecisionsRouter:
                             status_code=403,
                             detail="Not authorized to approve this decision",
                         )
+
+                # SC-H1: Re-authentication gate — verify fresh JWT for sensitive ops
+                # Re-auth via /auth/reauth endpoint before approving
+                reauth_token = request.headers.get("X-Reauth-Token", "")
+                if auth_required and reauth_token:
+                    from midas.api.auth import decode_access_token
+
+                    try:
+                        payload = decode_access_token(reauth_token)
+                        # Token must belong to same user
+                        if user and payload.get("sub") != user.get("sub"):
+                            raise HTTPException(status_code=403, detail="Re-auth token mismatch")
+                    except Exception:
+                        raise HTTPException(status_code=401, detail="Invalid re-auth token")
+
+                # SC-C3: Pre-trade compliance check before approving
+                engine = _get_compliance_engine()
+                compliance_context = {
+                    "decision_id": decision_id,
+                    "instruments": decision.get("instruments", ""),
+                    "action": decision.get("action", ""),
+                    "autonomy_level": decision.get("autonomy_level", 0),
+                    "current_autonomy_level": decision.get("autonomy_level", 0),
+                    "order_type": "live",
+                }
+                violations = await engine.get_blocking_violations(compliance_context)
+                if violations:
+                    blocking = [v.message for v in violations]
+                    logger.warning(
+                        "decision.approve.compliance_blocked", extra={"violations": blocking}
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Compliance blocked: {blocking[0]}",
+                    )
+
                 await db.express.update("decisions", decision_id, {"status": "approved"})
             return {"id": decision_id, "status": "approved"}
         except HTTPException:
@@ -358,6 +444,19 @@ class DecisionsRouter:
                             status_code=403,
                             detail="Not authorized to decline this decision",
                         )
+
+                # SC-H1: Re-authentication gate for decline operation
+                reauth_token = request.headers.get("X-Reauth-Token", "")
+                if auth_required and reauth_token:
+                    from midas.api.auth import decode_access_token
+
+                    try:
+                        payload = decode_access_token(reauth_token)
+                        if user and payload.get("sub") != user.get("sub"):
+                            raise HTTPException(status_code=403, detail="Re-auth token mismatch")
+                    except Exception:
+                        raise HTTPException(status_code=401, detail="Invalid re-auth token")
+
                 await db.express.update("decisions", decision_id, {"status": "declined"})
             return {"id": decision_id, "status": "declined"}
         except HTTPException:
@@ -963,7 +1062,6 @@ class SettingsRouter:
         self.router.add_api_route("/data-sources", self.get_data_sources, methods=["GET"])
         self.router.add_api_route("/paper-live", self.get_paper_live_state, methods=["GET"])
         self._kill_switch: KillSwitch | None = None
-        self._last_confirmation_code: str | None = None
 
     async def _get_kill_switch(self) -> KillSwitch | None:
         """Get or create the KillSwitch instance (lazy init)."""
@@ -975,49 +1073,78 @@ class SettingsRouter:
         return self._kill_switch
 
     async def get_envelope(self) -> dict[str, Any]:
-        """Get current investment envelope parameters."""
-        return {
-            "drawdown_ceiling": 0.15,
-            "vol_target_low": 0.08,
-            "vol_target_high": 0.18,
-            "concentration_position_max": 0.10,
-            "concentration_sector_max": 0.30,
-            "cost_budget_annual": 0.005,
-        }
+        """Get current investment envelope parameters from EnvelopeStore."""
+        db = await _get_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+        from midas.autonomy.envelope import EnvelopeStore
+
+        store = EnvelopeStore(db)
+        await store.load_from_db()
+        env = await store.get_envelope()
+        return env.to_dict()
 
     async def update_envelope(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Update envelope parameters (requires approval)."""
+        """Update envelope parameters via EnvelopeStore with audit trail."""
         logger.info("settings.envelope_update", extra={"params": body})
-        return {"status": "pending_approval", "changes": body}
+        db = await _get_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+        from midas.autonomy.envelope import EnvelopeStore, InvestmentEnvelope
+
+        envelope = InvestmentEnvelope.from_dict(body)
+        violations = envelope.validate()
+        if violations:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Envelope validation failed: {', '.join(violations)}",
+            )
+
+        store = EnvelopeStore(db)
+        await store.load_from_db()
+        result = await store.update_envelope(
+            envelope=envelope,
+            approved_by=body.get("approved_by", "user"),
+            reason=body.get("reason", "user_requested"),
+        )
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("reason", "Envelope update failed"),
+            )
+        return {"status": "updated", "filed_at": result.get("filed_at")}
 
     async def get_autonomy(self) -> dict[str, Any]:
-        """Get current autonomy level and state."""
+        """Get current autonomy level and state from AutonomyLadder."""
         logger.info("settings.autonomy.start")
         try:
             db = await _get_db()
             if db is None:
                 return {
                     "level": 0,
-                    "level_name": "L0_Advisory",
+                    "level_name": "L0 Observer",
                     "days_at_level": 0,
                     "upgrade_eligible": False,
                 }
-            rows = await db.express.list("model_registry")
-            champion = [r for r in rows if r.get("promotion_status") == "champion"]
-            level = 0
-            if champion:
-                level = int(champion[-1].get("pool_layer", "0") or 0)
+            # SC-H11: Read from AutonomyLadder audit log, not model_registry
+            from midas.autonomy.ladder import AutonomyLadder, LEVEL_NAMES
+
+            ladder = AutonomyLadder(db)
+            state = await ladder.get_current_state()
+            level = int(state.current_level)
             return {
                 "level": level,
-                "level_name": f"L{level}_Advisory" if level < 2 else f"L{level}_Supervised",
-                "days_at_level": 0,
+                "level_name": LEVEL_NAMES.get(level, f"L{level} Observer"),
+                "days_at_level": state.days_at_current_level,
+                "promotion_count": state.promotion_count,
+                "demotion_count": state.demotion_count,
                 "upgrade_eligible": False,
             }
         except Exception as exc:
             logger.error("settings.autonomy.failed", extra={"error": str(exc)})
             return {
                 "level": 0,
-                "level_name": "L0_Advisory",
+                "level_name": "L0 Observer",
                 "days_at_level": 0,
                 "upgrade_eligible": False,
             }
@@ -1026,23 +1153,14 @@ class SettingsRouter:
         """Activate kill switch - cancels all pending orders and issues confirmation code.
 
         Returns a confirmation_code that must be provided to clear the kill switch.
+        The confirmation code hash is persisted in the audit_log by KillSwitch
+        so the clear flow works across multiple workers.
         """
         logger.warning("kill_switch.activated")
         try:
             ks = await self._get_kill_switch()
             if ks is None:
-                # Generate code anyway so the clear flow can be tested
-                self._last_confirmation_code = secrets.token_hex(8)
-                code_hash = hashlib.sha256(self._last_confirmation_code.encode()).hexdigest()[:8]
-                logger.warning(
-                    "kill_switch.activate.ks_none_path",
-                    confirmation_code_hash=code_hash,
-                )
-                return {
-                    "status": "active",
-                    "confirmation_code": self._last_confirmation_code,
-                    "pending_orders_cancelled": 0,
-                }
+                raise HTTPException(status_code=503, detail="Database unavailable")
             # Cancel pending orders (non-fatal)
             db = await _get_db()
             pending: list[Any] = []
@@ -1064,14 +1182,15 @@ class SettingsRouter:
                         "kill_switch.list_orders.failed",
                         extra={"error": str(list_exc)},
                     )
-            # Activate kill switch (generates confirmation code)
+            # Activate kill switch (generates confirmation code, persists hash)
             result = await ks.activate(reason="user_requested")
-            self._last_confirmation_code = result.get("confirmation_code")
             return {
                 "status": "active",
-                "confirmation_code": self._last_confirmation_code,
+                "confirmation_code": result.get("confirmation_code"),
                 "pending_orders_cancelled": len(pending),
             }
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(
                 "kill_switch.activate.failed",

@@ -17,6 +17,7 @@ Ref: specs/08-autonomy-and-trust.md S5 (Kill Switch)
 Ref: specs/11-compliance-and-risk.md S4 (Hard Safety Limits)
 """
 
+import hashlib
 import hmac
 import json
 import secrets
@@ -38,7 +39,9 @@ class KillSwitch:
     """Kill switch with process-lock enforcement.
 
     State is held in-memory and mirrored to the ``audit_log`` for
-    durable audit trail.
+    durable audit trail. The confirmation code hash is persisted to
+    the audit_log so that multi-worker deployments can validate the
+    clear operation without shared in-memory state.
     """
 
     def __init__(self, db: DataFlow):
@@ -46,13 +49,13 @@ class KillSwitch:
         self._log = logger.bind(component="KillSwitch")
         self._active: bool = False
         self._process_lock = KillSwitchProcessLock()
-        self._confirmation_code: str | None = None
 
     async def activate(self, reason: str) -> dict[str, Any]:
         """Activate kill switch. Cancel all pending orders. Record state.
 
         Generates a confirmation code that must be provided to clear
-        the kill switch.
+        the kill switch. The SHA-256 hash of the code is persisted in
+        the audit_log so the clear flow can validate it across workers.
 
         Parameters
         ----------
@@ -66,16 +69,17 @@ class KillSwitch:
         now = datetime.now(timezone.utc).isoformat()
 
         self._active = True
-        self._confirmation_code = secrets.token_hex(8)
+        confirmation_code = secrets.token_hex(8)
+        confirmation_code_hash = hashlib.sha256(confirmation_code.encode()).hexdigest()
 
         result = {
             "active": True,
             "reason": reason,
             "activated_at": now,
-            "confirmation_code": self._confirmation_code,
+            "confirmation_code": confirmation_code,
         }
 
-        # Write audit record (non-fatal — confirmation code is already generated)
+        # Write audit record with hashed confirmation code (non-fatal)
         try:
             await self._db.express.create(
                 "audit_log",
@@ -86,6 +90,7 @@ class KillSwitch:
                         {
                             "reason": reason,
                             "activated_at": now,
+                            "confirmation_code_hash": confirmation_code_hash,
                         }
                     ),
                     "severity": "info",
@@ -118,6 +123,11 @@ class KillSwitch:
         4. 60-second dwell on first post-clear decision
         5. Revert to L1 autonomy
 
+        The confirmation code is validated by reading the SHA-256 hash
+        from the most recent ``kill_switch_activate`` audit record and
+        comparing it against the hash of the supplied code. This works
+        across multiple workers since the hash is persisted in the DB.
+
         Parameters
         ----------
         user_approved:
@@ -139,10 +149,32 @@ class KillSwitch:
             self._log.warning("kill_switch.clear_rejected", reason="no user approval")
             return {"cleared": False, "revert_level": 0, "conditions": []}
 
-        # Validate confirmation code
-        if not confirmation_code or not hmac.compare_digest(
-            confirmation_code, self._confirmation_code or ""
-        ):
+        # Read the confirmation code hash from the latest activation audit record
+        stored_hash: str | None = None
+        try:
+            rows = await self._db.express.list(
+                "audit_log",
+                filter={"action": "kill_switch_activate"},
+            )
+            if rows:
+                latest = rows[-1]
+                details_str = latest.get("details", "{}")
+                details = json.loads(details_str)
+                stored_hash = details.get("confirmation_code_hash")
+        except Exception as exc:
+            self._log.warning("kill_switch.read_hash_failed", error=str(exc))
+
+        # Validate confirmation code against persisted hash
+        if not confirmation_code or stored_hash is None:
+            self._log.warning(
+                "kill_switch.clear_rejected",
+                reason="no confirmation code or no activation record",
+                code_provided=bool(confirmation_code),
+            )
+            return {"cleared": False, "revert_level": 0, "conditions": []}
+
+        code_hash = hashlib.sha256(confirmation_code.encode()).hexdigest()
+        if not hmac.compare_digest(code_hash, stored_hash):
             self._log.warning(
                 "kill_switch.clear_rejected",
                 reason="invalid confirmation code",
@@ -169,7 +201,6 @@ class KillSwitch:
 
         now = datetime.now(timezone.utc).isoformat()
         self._active = False
-        self._confirmation_code = None
 
         # Write audit record
         await self._db.express.create(

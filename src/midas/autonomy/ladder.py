@@ -27,13 +27,23 @@ logger = structlog.get_logger("midas.autonomy.ladder")
 
 
 class AutonomyLevel(IntEnum):
-    """Five autonomy levels, from advisory to full autopilot."""
+    """Five autonomy levels, per spec 08 §2."""
 
-    L0 = 0  # Advisory only - system suggests, user decides everything
-    L1 = 1  # User-approved - system proposes, user approves each action
-    L2 = 2  # Supervised - system acts within bounds, user reviews periodically
-    L3 = 3  # Autonomous - system acts independently, user reviews exceptions
-    L4 = 4  # Full autonomy - system manages everything, user monitors
+    L0 = 0  # Observer - default on install; mandatory during paper trading
+    L1 = 1  # Co-Pilot - default after paper→live; briefs pre-loaded
+    L2 = 2  # Delegated Routine - routine rebalances within bounds
+    L3 = 3  # Delegated Tactical - Elevated-band tilts within pre-agreed constraints
+    L4 = 4  # Envelope Autopilot - opt-in only; challenger model promotion
+
+
+# Spec-compliant human-readable names per specs/08 §2.
+LEVEL_NAMES: dict[int, str] = {
+    0: "L0 Observer",
+    1: "L1 Co-Pilot",
+    2: "L2 Delegated Routine",
+    3: "L3 Delegated Tactical",
+    4: "L4 Envelope Autopilot",
+}
 
 
 @dataclass
@@ -46,6 +56,7 @@ class AutonomyState:
     demotion_count: int = 0
     days_at_current_level: int = 0
     first_seven_days_active: bool = False
+    live_start_date: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -91,6 +102,64 @@ class AutonomyLadder:
         )
         return self._state
 
+    async def get_days_since_live(self) -> int:
+        """Get the number of days since the paper-to-live transition.
+
+        Looks up the audit_log for a paper-to-live transition record
+        and computes days elapsed. Returns 999 if no transition found
+        (meaning not yet live or no record).
+
+        This value feeds the escalate.first_seven_days compliance rule
+        context, ensuring every action is user-facing for the first 7
+        live days regardless of autonomy level.
+        """
+        try:
+            rows = await self._db.express.list(
+                "audit_log",
+                filter={"rule_name": "paper_trading_state"},
+            )
+            for row in reversed(rows):  # Most recent first
+                action = row.get("action", "")
+                if action == "live":
+                    started_at = row.get("details", "")
+                    if started_at:
+                        try:
+                            start_dt = datetime.fromisoformat(started_at)
+                            days_elapsed = (datetime.now(timezone.utc) - start_dt).days
+                            return days_elapsed
+                        except (ValueError, TypeError):
+                            pass
+            # Not yet transitioned to live
+            return 999
+        except Exception as exc:
+            self._log.warning("autonomy.get_days_since_live.error", error=str(exc))
+            return 999
+
+    def check_first_seven_days_elapsed(self) -> None:
+        """Reset first_seven_days_active if 7 days have passed since live start.
+
+        Per spec 08 S3: the first seven live days are always L1 (Co-Pilot).
+        After 7 days, this flag is cleared so promotions beyond L1 are allowed.
+        """
+        if not self._state.first_seven_days_active:
+            return
+        if not self._state.live_start_date:
+            return
+        try:
+            start_dt = datetime.fromisoformat(self._state.live_start_date)
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            days_elapsed = (datetime.now(timezone.utc) - start_dt).days
+            if days_elapsed >= 7:
+                self._log.info(
+                    "autonomy.first_seven_days_elapsed",
+                    days_elapsed=days_elapsed,
+                    live_start=self._state.live_start_date,
+                )
+                self._state.first_seven_days_active = False
+        except (ValueError, TypeError):
+            pass
+
     async def request_promotion(
         self,
         target_level: AutonomyLevel,
@@ -107,6 +176,9 @@ class AutonomyLadder:
         Returns dict with ``success``, ``reason``, and ``new_level``.
         """
         current = self._state.current_level
+
+        # Check whether the first-seven-days window has elapsed
+        self.check_first_seven_days_elapsed()
 
         # Invariant: user must approve
         if not user_approved:
@@ -142,6 +214,42 @@ class AutonomyLadder:
                 "new_level": int(current),
             }
 
+        # Invariant: first seven live days require L1 Co-Pilot.
+        # When promoting FROM L0 (paper-to-live transition), activate the
+        # seven-day window.  When promoting above L1 while the window is
+        # active, reject.
+        if current == AutonomyLevel.L0 and target_level == AutonomyLevel.L1:
+            # Paper-to-live transition: start the seven-day clock
+            now_iso = datetime.now(timezone.utc).isoformat()
+            self._state.first_seven_days_active = True
+            self._state.live_start_date = now_iso
+        elif self._state.first_seven_days_active and target_level > AutonomyLevel.L1:
+            # Compute days remaining in the seven-day window
+            days_remaining = 7
+            if self._state.live_start_date:
+                try:
+                    start_dt = datetime.fromisoformat(self._state.live_start_date)
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=timezone.utc)
+                    elapsed = (datetime.now(timezone.utc) - start_dt).days
+                    days_remaining = max(0, 7 - elapsed)
+                except (ValueError, TypeError):
+                    pass
+            self._log.warning(
+                "autonomy.promotion_rejected",
+                reason="first_seven_days",
+                target=int(target_level),
+                days_remaining=days_remaining,
+            )
+            return {
+                "success": False,
+                "reason": (
+                    f"First seven live days require L1 Co-Pilot — "
+                    f"{days_remaining} days remaining"
+                ),
+                "new_level": int(current),
+            }
+
         # Apply promotion
         self._state = AutonomyState(
             current_level=target_level,
@@ -150,6 +258,7 @@ class AutonomyLadder:
             demotion_count=self._state.demotion_count,
             days_at_current_level=0,
             first_seven_days_active=self._state.first_seven_days_active,
+            live_start_date=self._state.live_start_date,
         )
 
         await self._write_audit(
@@ -199,6 +308,7 @@ class AutonomyLadder:
             demotion_count=self._state.demotion_count + 1,
             days_at_current_level=0,
             first_seven_days_active=self._state.first_seven_days_active,
+            live_start_date=self._state.live_start_date,
         )
 
         await self._write_audit(

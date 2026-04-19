@@ -407,8 +407,8 @@ class TestAuthReauth:
             request.json = AsyncMock(return_value={"password": "testpass"})
 
             result = await router.reauth(request)
-            assert "access_token" in result
-            assert result["expires_in"] == 86400
+            assert "reauth_token" in result
+            assert result["expires_in"] == 300
         finally:
             routes_mod._get_db = original_get_db
 

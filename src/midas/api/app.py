@@ -10,6 +10,8 @@ Ref: specs/09, specs/10, specs/11 S6.2 (JWT auth)
 import hmac
 import logging
 import os
+import time
+from collections import defaultdict, deque
 from typing import Any
 
 from fastapi import FastAPI, Request, HTTPException
@@ -40,6 +42,34 @@ from midas.api.routes_extended import (
 from midas.api.websocket import WebSocketRouter
 
 logger = logging.getLogger(__name__)
+
+# SC-H2: Per-IP sliding-window rate limiter
+_RATE_LIMIT_WINDOW_SECS = 60
+_RATE_LIMIT_MAX_REQUESTS = 60
+_ip_timestamps: dict[str, deque[float]] = defaultdict(
+    lambda: deque(maxlen=_RATE_LIMIT_MAX_REQUESTS)
+)
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP, accounting for X-Forwarded-For proxy header."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(ip: str) -> tuple[bool, int]:
+    """Check and record request. Returns (allowed, remaining)."""
+    now = time.monotonic()
+    cutoff = now - _RATE_LIMIT_WINDOW_SECS
+    timestamps = _ip_timestamps[ip]
+    while timestamps and timestamps[0] < cutoff:
+        timestamps.popleft()
+    if len(timestamps) >= _RATE_LIMIT_MAX_REQUESTS:
+        return False, 0
+    timestamps.append(now)
+    return True, _RATE_LIMIT_MAX_REQUESTS - len(timestamps)
 
 
 def create_app(
@@ -84,6 +114,17 @@ def create_app(
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     )
+
+    @app.middleware("http")
+    async def rate_limit_middleware(request: Request, call_next):
+        """Per-IP sliding-window rate limit (60 req/min)."""
+        ip = _get_client_ip(request)
+        allowed, remaining = _check_rate_limit(ip)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        response = await call_next(request)
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
+        return response
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):

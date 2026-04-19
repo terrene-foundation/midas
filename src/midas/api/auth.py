@@ -58,16 +58,21 @@ try:
         return bcrypt.checkpw(password.encode(), hashed.encode())
 
 except ImportError:
-    logger.warning("auth.bcrypt_unavailable_using_sha256_fallback")
+    logger.warning("auth.bcrypt_unavailable_using_pbkdf2_fallback")
+    _PBKDF2_ITERATIONS = 600_000
 
     def _hash_password(password: str) -> str:
         salt = secrets.token_hex(16)
-        h = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+        h = hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), salt.encode(), _PBKDF2_ITERATIONS
+        ).hex()
         return f"{salt}${h}"
 
     def _verify_password(password: str, hashed: str) -> bool:
         salt, h = hashed.split("$", 1)
-        computed = hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+        computed = hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), salt.encode(), _PBKDF2_ITERATIONS
+        ).hex()
         return hmac.compare_digest(computed, h)
 
 
@@ -97,6 +102,30 @@ def create_refresh_token() -> str:
 def decode_access_token(token: str) -> dict[str, Any]:
     """Decode and validate a JWT access token. Raises on invalid/expired."""
     return jwt.decode(token, _get_jwt_secret(), algorithms=[_JWT_ALGORITHM])
+
+
+_REAUTH_TOKEN_EXPIRY_MINUTES = 5
+
+
+def create_reauth_token(user_id: str, email: str) -> str:
+    """Create a short-lived JWT for re-authentication of sensitive operations."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "type": "reauth",
+        "iat": now,
+        "exp": now + timedelta(minutes=_REAUTH_TOKEN_EXPIRY_MINUTES),
+    }
+    return jwt.encode(payload, _get_jwt_secret(), algorithm=_JWT_ALGORITHM)
+
+
+def verify_reauth_token(token: str) -> dict[str, Any]:
+    """Verify a re-auth token. Raises on invalid/expired or wrong type."""
+    payload = decode_access_token(token)
+    if payload.get("type") != "reauth":
+        raise HTTPException(status_code=401, detail="Invalid re-auth token")
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +158,6 @@ class AuthRouter:
             raise HTTPException(status_code=400, detail="Email and password required")
 
         db = await _routes_module._get_db()
-        if db is None:
-            raise HTTPException(status_code=503, detail="Database unavailable")
 
         users = await db.express.list("users", filter={"email": email})
         if not users:
@@ -179,8 +206,6 @@ class AuthRouter:
             raise HTTPException(status_code=400, detail="Refresh token required")
 
         db = await _routes_module._get_db()
-        if db is None:
-            raise HTTPException(status_code=503, detail="Database unavailable")
 
         old_hash = hashlib.sha256(old_refresh.encode()).hexdigest()
         sessions = await db.express.list("sessions", filter={"refresh_token_hash": old_hash})
@@ -211,6 +236,35 @@ class AuthRouter:
 
         # Revoke old session
         await db.express.update("sessions", str(session["id"]), {"revoked_at": now.isoformat()})
+
+        # Concurrent-use detection: if another non-revoked session exists for
+        # this user that was created AFTER the old session, the refresh token
+        # was likely stolen. Revoke ALL sessions for this user.
+        user_id_int = session.get("user_id", 0)
+        old_created = session.get("created_at", "") or session.get("expires_at", "")
+        if user_id_int:
+            all_sessions = await db.express.list("sessions", filter={"user_id": user_id_int})
+            suspicious = [
+                s
+                for s in all_sessions
+                if not s.get("revoked_at", "")
+                and str(s.get("id")) != str(session["id"])
+                and (s.get("created_at", "") or "") > old_created
+            ]
+            if suspicious:
+                for s in all_sessions:
+                    if not s.get("revoked_at", ""):
+                        await db.express.update(
+                            "sessions", str(s["id"]), {"revoked_at": now.isoformat()}
+                        )
+                logger.warning(
+                    "auth.refresh.concurrent_use_detected",
+                    extra={"user_id": str(user_id_int), "sessions_revoked": len(all_sessions)},
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail="Concurrent session detected. All sessions revoked.",
+                )
 
         # Get user for new access token
         user_id = str(session.get("user_id", ""))
@@ -256,8 +310,6 @@ class AuthRouter:
         logger.info("auth.logout.start")
 
         db = await _routes_module._get_db()
-        if db is None:
-            raise HTTPException(status_code=503, detail="Database unavailable")
 
         if refresh_token:
             token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
@@ -301,8 +353,6 @@ class AuthRouter:
         email = payload.get("email", "")
 
         db = await _routes_module._get_db()
-        if db is None:
-            raise HTTPException(status_code=503, detail="Database unavailable")
 
         users = await db.express.list("users", filter={"email": email})
         if not users:
@@ -313,13 +363,13 @@ class AuthRouter:
             logger.info("auth.reauth.failed", extra={"user_id": user_id})
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        new_token = create_access_token(user_id, email)
+        reauth_token = create_reauth_token(user_id, email)
 
         logger.info("auth.reauth.ok", extra={"user_id": user_id})
 
         return {
-            "access_token": new_token,
-            "expires_in": _ACCESS_TOKEN_EXPIRY_MINUTES * 60,
+            "reauth_token": reauth_token,
+            "expires_in": _REAUTH_TOKEN_EXPIRY_MINUTES * 60,
         }
 
 
