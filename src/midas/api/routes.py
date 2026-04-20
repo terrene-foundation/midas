@@ -149,6 +149,7 @@ class PulseRouter:
         self.router.add_api_route("/", self.get_pulse, methods=["GET"])
         self.router.add_api_route("/regime", self.get_regime, methods=["GET"])
         self.router.add_api_route("/attention", self.get_attention_score, methods=["GET"])
+        self.router.add_api_route("/attention/weekly", self.get_attention_weekly, methods=["GET"])
 
     async def get_pulse(self) -> dict[str, Any]:
         """Get current pulse state including NAV, positions, a_t score, pending decisions."""
@@ -269,6 +270,61 @@ class PulseRouter:
             }
 
 
+    async def get_attention_weekly(self) -> dict[str, Any]:
+        """Weekly attention report — 7-day breakdown of decision metrics.
+
+        Aggregates decisions from the past 7 days into daily buckets.
+        """
+        logger.info("pulse.get_attention_weekly.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"days": [], "summary": {}}
+
+            now = datetime.now(timezone.utc)
+            decisions = await db.express.list("decisions")
+            audit_rows = await db.express.list("audit_log")
+
+            DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            days: list[dict[str, Any]] = []
+            for i in range(6, -1, -1):
+                day_date = now.date() - __import__("datetime").timedelta(days=i)
+                day_decisions = [
+                    d for d in decisions
+                    if d.get("created_at_day") == day_date.isoformat()
+                ]
+                count = len(day_decisions)
+                total_seconds = sum(
+                    float(d.get("deliberation_seconds", 0) or 0) for d in day_decisions
+                )
+                override_count = sum(
+                    1 for d in day_decisions if d.get("was_overridden", False)
+                )
+                days.append({
+                    "day": DAY_NAMES[day_date.weekday()],
+                    "date": day_date.isoformat(),
+                    "decision_seconds": round(total_seconds, 1),
+                    "decision_count": count,
+                    "avg_seconds_per_decision": round(total_seconds / count, 1) if count > 0 else 0,
+                    "override_rate": round(override_count / count, 3) if count > 0 else 0,
+                })
+
+            total_sec = sum(d["decision_seconds"] for d in days)
+            total_count = sum(d["decision_count"] for d in days)
+            summary = {
+                "total_decision_seconds": round(total_sec, 1),
+                "total_decision_count": total_count,
+                "avg_seconds_per_decision": round(total_sec / total_count, 1) if total_count > 0 else 0,
+                "avg_override_rate": round(
+                    sum(d["override_rate"] for d in days) / 7, 3
+                ),
+            }
+            return {"days": days, "summary": summary}
+        except Exception as exc:
+            logger.error("pulse.get_attention_weekly.failed", extra={"error": str(exc)})
+            return {"days": [], "summary": {}}
+
+
 class DecisionsRouter:
     """Decisions surface - pending decision cards and action handling.
 
@@ -354,8 +410,7 @@ class DecisionsRouter:
         """Approve a pending decision. Requires re-authentication and decision ownership."""
         logger.info("decision.approve", extra={"decision_id": decision_id})
         user = getattr(request.state, "user", None)
-        auth_required = bool(os.environ.get("JWT_SECRET", ""))
-        if auth_required and not user:
+        if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
 
         try:
@@ -424,8 +479,7 @@ class DecisionsRouter:
         """Decline a pending decision. Requires re-authentication and decision ownership."""
         logger.info("decision.decline", extra={"decision_id": decision_id})
         user = getattr(request.state, "user", None)
-        auth_required = bool(os.environ.get("JWT_SECRET", ""))
-        if auth_required and not user:
+        if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
 
         try:

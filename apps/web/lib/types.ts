@@ -1,0 +1,232 @@
+import type { Band } from "@/stores/regime-store";
+
+export type { Band };
+
+export interface PulseResponse {
+  nav: number;
+  nav_change_pct: number;
+  attention_score: number;
+  attention_band: Band;
+  pending_decisions_count: number;
+  recent_actions: Array<{
+    action: string;
+    rationale: string;
+    timestamp: string;
+  }>;
+  positions_summary: Array<{ ticker: string; market_value: number }>;
+}
+
+export interface RegimeResponse {
+  a_t: number;
+  band: Band;
+  z_t_posterior: number[];
+  ood_score: number;
+  changepoint_probability: number;
+}
+
+export interface AttentionResponse {
+  a_t: number;
+  band: Band;
+  decision_seconds_today: number;
+  fatigue_signal: boolean;
+}
+
+export interface DecisionSummary {
+  id: string;
+  decision_type: string;
+  instruments: string;
+  action: string;
+  confidence: number;
+  dollar_impact: number;
+  created_at_day: string;
+}
+
+export interface DecisionDetail {
+  id: string;
+  decision_type: string;
+  instruments: string;
+  action: string;
+  confidence: number;
+  status: string;
+  rationale: string;
+}
+
+export interface BriefResponse {
+  decision_id: string;
+  dollar_impact: number;
+  card: {
+    action_line: string;
+    counter_evidence: string;
+    what_would_change_mind: string;
+    buttons: string[];
+  };
+  sections: Array<{
+    title: string;
+    content: string;
+    type: string;
+  }>;
+}
+
+export interface PortfolioResponse {
+  nav: number;
+  cash: number;
+  positions_count: number;
+  total_value: number;
+}
+
+export interface Position {
+  ticker: string;
+  quantity: number;
+  market_value: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
+  weight: number;
+  drift_from_target: number;
+}
+
+export interface AllocationResponse {
+  allocations: Array<{
+    category: string;
+    weight: number;
+    target_weight: number;
+    drift: number;
+  }>;
+}
+
+export interface AttributionResponse {
+  total_return: number;
+  factors: Array<{
+    name: string;
+    contribution: number;
+  }>;
+}
+
+export interface RiskMetrics {
+  portfolio_var_95: number;
+  portfolio_var_99: number;
+  max_drawdown: number;
+  sharpe_ratio: number;
+  volatility: number;
+}
+
+export interface BacktestRun {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface BacktestResult {
+  run_id: string;
+  cagr: number | null;
+  sharpe: number | null;
+  max_drawdown: number | null;
+  calmar: number | null;
+  turnover: number | null;
+  win_rate: number | null;
+  equity_curve: Array<{ date: string; value: number }>;
+}
+
+export interface Signal {
+  id: string;
+  source: string;
+  signal_type: string;
+  instrument: string;
+  direction: string;
+  strength: number;
+  timestamp: string;
+}
+
+export interface EnvelopeConfig {
+  vol_target_low: number;
+  vol_target_high: number;
+  drawdown_ceiling: number;
+  concentration_cap: number;
+  cost_budget_ceiling?: number;
+  universe_exclusions?: string[];
+}
+
+export interface AutonomyState {
+  level: number;
+  level_name: string;
+  can_auto_approve: boolean;
+  requires_reauth: boolean;
+  level_history?: Array<{
+    from_level: number;
+    to_level: number;
+    changed_at: string;
+  }>;
+  pending_upgrade?: {
+    operating_history: {
+      days_at_level: number;
+      total_decisions: number;
+      override_rate: number;
+    };
+    brinson_snapshot: Record<string, number>;
+    calibration_snapshot: Record<string, unknown>;
+    override_log: Array<{
+      decision_id: string;
+      reason: string;
+      timestamp: string;
+    }>;
+    changes_at_new_level: string[];
+  };
+}
+
+export interface KillSwitchState {
+  isActive: boolean;
+  reason: string | null;
+  activated_at: string | null;
+  confirmation_code?: string | null;
+  state_brief?: Record<string, unknown>;
+}
+
+export interface DataSourceStatus {
+  name: string;
+  status: string;
+  last_update: string | null;
+}
+
+export interface PaperLiveState {
+  mode: "paper" | "live";
+  paper_start_date: string | null;
+  live_start_date: string | null;
+  days_in_paper: number;
+}
+
+export interface ComplianceRule {
+  id: string;
+  name: string;
+  severity: string;
+  status: string;
+  description: string;
+}
+
+export interface DebateThread {
+  thread_id: string;
+  decision_id?: string;
+  status: string;
+  originating_context?: string;
+  last_activity?: string;
+}
+
+export interface DebateMessage {
+  id: string;
+  content: string;
+  severity: string;
+  role: "user" | "agent";
+  provenance_pointers?: Array<{
+    source: string;
+    reference: string;
+    snippet?: string;
+  }>;
+}
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  severity: string;
+  details: string;
+  filed_at: string;
+}

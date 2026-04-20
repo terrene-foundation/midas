@@ -20,9 +20,10 @@ interface RegimeState {
 }
 
 function deriveBand(a_t: number): Band {
-  if (a_t < 0.25) return "calm";
-  if (a_t < 0.5) return "elevated";
-  if (a_t < 0.75) return "urgent";
+  // Thresholds MUST match RegimeRenderer.get_band() in src/midas/regime/__init__.py
+  if (a_t < 0.3) return "calm";
+  if (a_t < 0.6) return "elevated";
+  if (a_t < 0.85) return "urgent";
   return "crisis";
 }
 

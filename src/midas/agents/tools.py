@@ -5,9 +5,9 @@ fabric state. All decision-making happens in the LLM, not in tools.
 """
 
 import json
-import math
 
 import structlog
+from midas.universe import FACTOR_MAP
 
 logger = structlog.get_logger("midas.agents.tools")
 
@@ -19,6 +19,13 @@ class DebateTools:
     The LLM decides how to use the returned data.
     """
 
+    FABRIC_ALLOWLIST = frozenset({
+        "positions", "decisions", "latent_state", "audit_log",
+        "fabric_cache", "scheduler_jobs", "scheduler_status",
+        "paper_live_settings", "model_registry", "onboarding_state",
+        "notification_settings", "brief_history",
+    })
+
     def __init__(self, db):
         self._db = db
 
@@ -28,7 +35,7 @@ class DebateTools:
         Parameters
         ----------
         table:
-            Name of the fabric table to query.
+            Name of the fabric table to query. Must be in the allowlist.
         filter:
             Filter dict for the query.
 
@@ -37,6 +44,9 @@ class DebateTools:
         list[dict]
             Matching rows from the fabric table.
         """
+        if table not in self.FABRIC_ALLOWLIST:
+            logger.warning("tools.query_fabric.blocked", table=table)
+            return [{"error": f"Table '{table}' is not accessible via debate tools"}]
         logger.info("tools.query_fabric", table=table, filter_keys=list(filter.keys()))
         try:
             rows = await self._db.express.list(table, filter=filter)
@@ -175,6 +185,17 @@ class DebateTools:
 
         return rows
 
+    def _get_fixed_income_tickers(self) -> set[str]:
+        """Return fixed income tickers from the universe factor map.
+
+        Uses the universe module's factor map to get authoritative
+        fixed income ETF tickers instead of a hardcoded list.
+        """
+        fixed_income_tickers: set[str] = set()
+        for category in ["us_bond", "us_long_bond"]:
+            fixed_income_tickers.update(FACTOR_MAP.get(category, []))
+        return fixed_income_tickers
+
     async def propose_alternative_allocation(
         self, current_weights: dict, constraint_changes: dict
     ) -> dict:
@@ -206,8 +227,8 @@ class DebateTools:
 
         max_equity = constraint_changes.get("max_equity")
         if max_equity is not None:
-            # Identify equity-like instruments (heuristic: not bonds/fixed income)
-            fixed_income = {"TLT", "BND", "AGG", "IEF", "LQD", "TIP"}
+            # Identify equity-like instruments using universe factor map
+            fixed_income = self._get_fixed_income_tickers()
             equity_weight = sum(v for k, v in new_weights.items() if k not in fixed_income)
             if equity_weight > max_equity:
                 scale = max_equity / equity_weight if equity_weight > 0 else 0
