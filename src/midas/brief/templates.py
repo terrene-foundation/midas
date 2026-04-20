@@ -33,20 +33,21 @@ class BriefTemplates:
         sections = brief_data.get("sections", {})
         confidence = brief_data.get("confidence", 0.0)
 
-        summary = sections.get("situation_summary", "No summary available.")
+        thesis = sections.get("situation_summary", "No summary available.")
         recommendation = sections.get("recommendation", "No recommendation.")
         risk = sections.get("risk_factors", "No risk assessment.")
+        change_mind = sections.get("what_would_change_mind", "")
 
         return (
             f"[Confidence: {confidence:.0%}] "
-            f"{summary} "
+            f"{thesis} "
             f"Recommendation: {recommendation} "
-            f"Key risk: {risk}"
+            f"Key risk: {risk}" + (f" | Would change mind if: {change_mind}" if change_mind else "")
         )
 
     @staticmethod
     def render_standard(brief_data: dict) -> str:
-        """Render full 7-section brief.
+        """Render full brief with all 10 sections per spec 07 S2.
 
         Parameters
         ----------
@@ -56,7 +57,7 @@ class BriefTemplates:
         Returns
         -------
         str
-            Full formatted brief with all 7 sections.
+            Full formatted brief with all 10 sections.
         """
         sections = brief_data.get("sections", {})
         confidence = brief_data.get("confidence", 0.0)
@@ -75,7 +76,7 @@ class BriefTemplates:
             "",
             f"Confidence: {confidence:.0%}  |  Model: {model_version}",
             "",
-            "--- Situation Summary ---",
+            "--- Thesis ---",
             sections.get("situation_summary", "N/A"),
             "",
             "--- Evidence Assessment ---",
@@ -86,6 +87,15 @@ class BriefTemplates:
             "",
             "--- Counter-Evidence ---",
             sections.get("counter_evidence", "N/A"),
+            "",
+            "--- If Approved ---",
+            sections.get("if_approved", "N/A"),
+            "",
+            "--- If Rejected ---",
+            sections.get("if_rejected", "N/A"),
+            "",
+            "--- Historical Precedent ---",
+            sections.get("historical_precedent", "N/A"),
             "",
             "--- What Would Change My Mind ---",
             sections.get("what_would_change_mind", "N/A"),
