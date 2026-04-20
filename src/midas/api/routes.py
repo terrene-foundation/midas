@@ -269,7 +269,6 @@ class PulseRouter:
                 "fatigue_signal": False,
             }
 
-
     async def get_attention_weekly(self) -> dict[str, Any]:
         """Weekly attention report — 7-day breakdown of decision metrics.
 
@@ -290,34 +289,35 @@ class PulseRouter:
             for i in range(6, -1, -1):
                 day_date = now.date() - __import__("datetime").timedelta(days=i)
                 day_decisions = [
-                    d for d in decisions
-                    if d.get("created_at_day") == day_date.isoformat()
+                    d for d in decisions if d.get("created_at_day") == day_date.isoformat()
                 ]
                 count = len(day_decisions)
                 total_seconds = sum(
                     float(d.get("deliberation_seconds", 0) or 0) for d in day_decisions
                 )
-                override_count = sum(
-                    1 for d in day_decisions if d.get("was_overridden", False)
+                override_count = sum(1 for d in day_decisions if d.get("was_overridden", False))
+                days.append(
+                    {
+                        "day": DAY_NAMES[day_date.weekday()],
+                        "date": day_date.isoformat(),
+                        "decision_seconds": round(total_seconds, 1),
+                        "decision_count": count,
+                        "avg_seconds_per_decision": (
+                            round(total_seconds / count, 1) if count > 0 else 0
+                        ),
+                        "override_rate": round(override_count / count, 3) if count > 0 else 0,
+                    }
                 )
-                days.append({
-                    "day": DAY_NAMES[day_date.weekday()],
-                    "date": day_date.isoformat(),
-                    "decision_seconds": round(total_seconds, 1),
-                    "decision_count": count,
-                    "avg_seconds_per_decision": round(total_seconds / count, 1) if count > 0 else 0,
-                    "override_rate": round(override_count / count, 3) if count > 0 else 0,
-                })
 
             total_sec = sum(d["decision_seconds"] for d in days)
             total_count = sum(d["decision_count"] for d in days)
             summary = {
                 "total_decision_seconds": round(total_sec, 1),
                 "total_decision_count": total_count,
-                "avg_seconds_per_decision": round(total_sec / total_count, 1) if total_count > 0 else 0,
-                "avg_override_rate": round(
-                    sum(d["override_rate"] for d in days) / 7, 3
+                "avg_seconds_per_decision": (
+                    round(total_sec / total_count, 1) if total_count > 0 else 0
                 ),
+                "avg_override_rate": round(sum(d["override_rate"] for d in days) / 7, 3),
             }
             return {"days": days, "summary": summary}
         except Exception as exc:
@@ -431,9 +431,8 @@ class DecisionsRouter:
                         )
 
                 # SC-H1: Re-authentication gate — verify fresh JWT for sensitive ops
-                # Re-auth via /auth/reauth endpoint before approving
                 reauth_token = request.headers.get("X-Reauth-Token", "")
-                if auth_required and reauth_token:
+                if reauth_token:
                     from midas.api.auth import decode_access_token
 
                     try:
@@ -501,7 +500,7 @@ class DecisionsRouter:
 
                 # SC-H1: Re-authentication gate for decline operation
                 reauth_token = request.headers.get("X-Reauth-Token", "")
-                if auth_required and reauth_token:
+                if reauth_token:
                     from midas.api.auth import decode_access_token
 
                     try:
@@ -579,8 +578,11 @@ class DecisionsRouter:
                 "sections": [],
             }
 
-    async def batch_review(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Batch review multiple decisions."""
+    async def batch_review(self, request: Request, body: dict[str, Any]) -> dict[str, Any]:
+        """Batch review multiple decisions. Requires authentication."""
+        user = getattr(request.state, "user", None)
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
         actions = body.get("actions", [])
         logger.info("decisions.batch_review", extra={"count": len(actions)})
         results = []

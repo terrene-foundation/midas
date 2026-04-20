@@ -48,8 +48,9 @@ class DebateAgent:
         "Respond with a clear, critical paragraph."
     )
 
-    def __init__(self, provider):
+    def __init__(self, provider, tools=None):
         self._provider = provider
+        self._tools = tools
         self._thread_store: dict[str, list[dict]] = {}
 
     def store_thread(self, thread_id: str, messages: list[dict]) -> None:
@@ -95,12 +96,19 @@ class DebateAgent:
             "recommendation", "the proposed action"
         )
 
+        # Inject live fabric data when tools are available
+        live_context = ""
+        if self._tools is not None:
+            live_context = await self._build_live_context(brief)
+
         user_message = (
             f"Debate rounds requested: {debate_rounds}\n"
             f"Position to debate: {position}\n"
             f"Brief summary:\n{brief_summary}\n"
-            f"Run the full debate and produce a final structured JSON result."
         )
+        if live_context:
+            user_message += f"\nLive portfolio data:\n{live_context}\n"
+        user_message += f"Run the full debate and produce a final structured JSON result."
 
         messages = [
             {"role": "system", "content": self.DEBATE_SYSTEM_PROMPT},
@@ -144,6 +152,51 @@ class DebateAgent:
         )
 
         return parsed
+
+    async def _build_live_context(self, brief: dict) -> str:
+        """Fetch live portfolio and fabric data to inject into debate context."""
+        if self._tools is None:
+            return ""
+        tools = self._tools
+        sections: list[str] = []
+        instruments = brief.get("instruments", [])
+        if isinstance(instruments, str):
+            instruments = [i.strip() for i in instruments.split(",") if i.strip()]
+
+        try:
+            positions = await tools.query_fabric("positions", {})
+            if positions:
+                total_value = sum(float(p.get("market_value", 0) or 0) for p in positions)
+                sections.append(
+                    f"Current portfolio ({len(positions)} positions, NAV ${total_value:,.0f}):"
+                )
+                for p in positions[:10]:
+                    ticker = p.get("ticker", "?")
+                    mv = float(p.get("market_value", 0) or 0)
+                    pnl = float(p.get("unrealized_pnl", 0) or 0)
+                    sections.append(f"  {ticker}: ${mv:,.0f} (P&L: ${pnl:,.0f})")
+                if instruments:
+                    relevant = [p for p in positions if p.get("ticker") in instruments]
+                    if relevant:
+                        sections.append("Positions relevant to this decision:")
+                        for p in relevant:
+                            sections.append(
+                                f"  {p.get('ticker')}: ${float(p.get('market_value', 0) or 0):,.0f}"
+                            )
+        except Exception as exc:
+            logger.warning("debate.live_context.positions_failed", error=str(exc))
+
+        try:
+            latent_rows = await tools.query_fabric("latent_state", {})
+            if latent_rows:
+                latest = latent_rows[-1]
+                z_scale = float(latest.get("z_scale", 0) or 0)
+                ood = float(latest.get("ood_score", 0) or 0)
+                sections.append(f"Regime state: z_scale={z_scale:.2f}, OOD score={ood:.2f}")
+        except Exception as exc:
+            logger.warning("debate.live_context.regime_failed", error=str(exc))
+
+        return "\n".join(sections)
 
     async def steelman_position(self, position: str, evidence: list[dict]) -> str:
         """Build strongest case for the given position.

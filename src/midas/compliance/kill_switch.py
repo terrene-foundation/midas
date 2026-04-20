@@ -50,6 +50,82 @@ class KillSwitch:
         self._active: bool = False
         self._process_lock = KillSwitchProcessLock()
 
+    async def auto_evaluate(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Evaluate auto-trip conditions and activate if any are met.
+
+        Per specs/08 § Kill Switch, Midas trips the switch automatically when:
+        1. Drawdown crosses the hard circuit-breaker threshold
+        2. OOD ``z_t`` coincides with rapid NAV move
+        3. IBKR integration reports a severe error class
+        4. PACT policy breach detected
+
+        This method is called by the kill_switch_auto_trip scheduled job.
+        It does NOT auto-activate if the switch is already active.
+
+        Parameters
+        ----------
+        context:
+            Dict containing:
+            - ``drawdown_pct``: current drawdown as fraction (0.0-1.0)
+            - ``drawdown_ceiling``: hard circuit-breaker threshold fraction
+            - ``ood_score``: current OOD score (0.0-1.0)
+            - ``ood_threshold``: OOD threshold fraction
+            - ``nav_move_pct``: absolute NAV change over the lookback window
+            - ``nav_move_rate``: threshold for rapid NAV move (e.g., 0.03 = 3%)
+            - ``ibkr_severe_error``: True if IBKR reported a severe error
+            - ``pact_breach``: True if PACT policy breach detected
+
+        Returns
+        -------
+        dict with ``tripped`` (bool), ``reason`` (str or None), ``condition``
+        (str: one of drawdown/ood_nav/ibkr_error/pact_breach/none)
+        """
+        if self._active:
+            return {"tripped": False, "reason": None, "condition": "none"}
+
+        conditions = []
+
+        # 1. Drawdown circuit-breaker
+        drawdown_pct = context.get("drawdown_pct", 0.0)
+        drawdown_ceiling = context.get("drawdown_ceiling", 0.20)
+        if drawdown_pct >= drawdown_ceiling:
+            conditions.append(
+                (
+                    "drawdown",
+                    f"drawdown {drawdown_pct:.1%} exceeds circuit-breaker ceiling {drawdown_ceiling:.1%}",
+                )
+            )
+
+        # 2. OOD + rapid NAV move
+        ood_score = context.get("ood_score", 0.0)
+        ood_threshold = context.get("ood_threshold", 0.7)
+        nav_move_pct = context.get("nav_move_pct", 0.0)
+        nav_move_rate = context.get("nav_move_rate", 0.03)
+        if ood_score >= ood_threshold and nav_move_pct >= nav_move_rate:
+            conditions.append(
+                (
+                    "ood_nav",
+                    f"OOD score {ood_score:.2f} >= {ood_threshold} + NAV move {nav_move_pct:.1%} >= {nav_move_rate:.1%}",
+                )
+            )
+
+        # 3. IBKR severe error
+        if context.get("ibkr_severe_error", False):
+            conditions.append(("ibkr_error", "IBKR integration reported severe error class"))
+
+        # 4. PACT policy breach
+        if context.get("pact_breach", False):
+            conditions.append(("pact_breach", "PACT policy breach detected"))
+
+        if not conditions:
+            return {"tripped": False, "reason": None, "condition": "none"}
+
+        # Activate on the first triggered condition (priority order: drawdown > ood_nav > ibkr_error > pact_breach)
+        condition, reason = conditions[0]
+        self._log.warning("kill_switch.auto_trip.triggered", condition=condition, reason=reason)
+        await self.activate(reason=f"[AUTO] {reason}")
+        return {"tripped": True, "reason": reason, "condition": condition}
+
     async def activate(self, reason: str) -> dict[str, Any]:
         """Activate kill switch. Cancel all pending orders. Record state.
 

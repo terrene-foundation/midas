@@ -1,4 +1,4 @@
-"""7 warning compliance rules — non-blocking informational alerts.
+"""9 warning compliance rules — non-blocking informational alerts.
 
 Warning rules do not block or escalate; they surface information in
 the decision brief.  The predicate returns True when the warning
@@ -13,7 +13,7 @@ from midas.compliance.rules_engine import ComplianceRule, RuleSeverity
 
 
 def create_warning_rules() -> list[ComplianceRule]:
-    """Create the v1 set of 7 warning rules."""
+    """Create the v1 set of 9 warning rules."""
     rules: list[ComplianceRule] = []
 
     # -- 1. warn.turnover_high ------------------------------------------------
@@ -101,6 +101,34 @@ def create_warning_rules() -> list[ComplianceRule]:
             severity=RuleSeverity.WARN,
             description="Warn when order submitted during auction window",
             predicate=lambda ctx: ctx.get("in_auction_window", False) is True,
+        )
+    )
+
+    # -- 8. warn.wide_spread -------------------------------------------------
+    rules.append(
+        ComplianceRule(
+            rule_id="warn.wide_spread",
+            rule_name="Wide Spread",
+            category="warn",
+            severity=RuleSeverity.WARN,
+            description="Warn when current spread exceeds rolling mean + N standard deviations",
+            predicate=lambda ctx: (
+                ctx.get("current_spread", 0)
+                > ctx.get("spread_rolling_mean", 0)
+                + ctx.get("spread_stdev_multiplier", 2) * ctx.get("spread_stdev", 0)
+            ),
+        )
+    )
+
+    # -- 9. warn.event_adjacent ----------------------------------------------
+    rules.append(
+        ComplianceRule(
+            rule_id="warn.event_adjacent",
+            rule_name="Event Adjacent",
+            category="warn",
+            severity=RuleSeverity.WARN,
+            description="Warn when instrument has a known event within the event window",
+            predicate=lambda ctx: ctx.get("event_window_days", 0) > 0,
         )
     )
 

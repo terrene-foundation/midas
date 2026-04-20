@@ -46,9 +46,11 @@ logger = logging.getLogger(__name__)
 # SC-H2: Per-IP sliding-window rate limiter
 _RATE_LIMIT_WINDOW_SECS = 60
 _RATE_LIMIT_MAX_REQUESTS = 60
+_MAX_TRACKED_IPS = 10000
 _ip_timestamps: dict[str, deque[float]] = defaultdict(
     lambda: deque(maxlen=_RATE_LIMIT_MAX_REQUESTS)
 )
+_ip_last_seen: dict[str, float] = {}
 
 
 def _get_client_ip(request: Request) -> str:
@@ -63,6 +65,15 @@ def _check_rate_limit(ip: str) -> tuple[bool, int]:
     """Check and record request. Returns (allowed, remaining)."""
     now = time.monotonic()
     cutoff = now - _RATE_LIMIT_WINDOW_SECS
+
+    # Evict stale IPs to bound memory growth
+    if len(_ip_last_seen) > _MAX_TRACKED_IPS:
+        stale = [k for k, v in _ip_last_seen.items() if v < cutoff]
+        for k in stale:
+            _ip_timestamps.pop(k, None)
+            del _ip_last_seen[k]
+
+    _ip_last_seen[ip] = now
     timestamps = _ip_timestamps[ip]
     while timestamps and timestamps[0] < cutoff:
         timestamps.popleft()

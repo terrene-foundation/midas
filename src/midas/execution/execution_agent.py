@@ -108,7 +108,7 @@ class ExecutionAgent:
             "orders",
             order_id,
             {
-                "status": OrderStatus.PARTIAL,
+                "status": OrderStatus.PARTIAL_FILLED,
                 "filled_qty": new_filled,
                 "filled_price": fill_price,
             },
@@ -137,7 +137,7 @@ class ExecutionAgent:
 
         return {
             "order_id": order_id,
-            "status": OrderStatus.PARTIAL,
+            "status": OrderStatus.PARTIAL_FILLED,
             "filled_quantity": new_filled,
             "fill_price": fill_price,
         }
@@ -158,7 +158,7 @@ class ExecutionAgent:
         current_status = order.get("status", OrderStatus.PENDING)
 
         # Determine the appropriate terminal state
-        if current_status == OrderStatus.SUBMITTED:
+        if current_status == OrderStatus.SUBMITTED_PENDING:
             target = OrderStatus.REJECTED
         else:
             target = OrderStatus.CANCELLED
@@ -183,7 +183,11 @@ class ExecutionAgent:
         cancelled_ids: list[str] = []
 
         # List all orders that are in a cancellable state
-        cancellable_statuses = (OrderStatus.PENDING, OrderStatus.SUBMITTED)
+        cancellable_statuses = (
+            OrderStatus.PENDING,
+            OrderStatus.SUBMITTED_PENDING,
+            OrderStatus.WORKING,
+        )
 
         for status in cancellable_statuses:
             try:

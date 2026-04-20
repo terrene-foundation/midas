@@ -1,4 +1,4 @@
-"""19 blocking compliance rules — hard gates that veto proposed trades.
+"""21 blocking compliance rules — hard gates that veto proposed trades.
 
 Each rule's predicate returns True when the rule is VIOLATED.
 Rules are data: registered at startup, modifiable without a release.
@@ -126,7 +126,19 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 9. state.kill_switch ------------------------------------------------
+    # -- 9. data.stale_cost_inputs ------------------------------------------
+    rules.append(
+        ComplianceRule(
+            rule_id="data.stale_cost_inputs",
+            rule_name="Stale Cost Model Inputs",
+            category="data",
+            severity=RuleSeverity.BLOCK,
+            description="Cost model inputs (volatility, ADV, spread) must be fresh",
+            predicate=lambda ctx: (ctx.get("cost_input_age_seconds", 0) > 86400),
+        )
+    )
+
+    # -- 10. state.kill_switch ------------------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="state.kill_switch",
@@ -138,7 +150,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 10. state.paper_trading ---------------------------------------------
+    # -- 11. state.paper_trading ---------------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="state.paper_trading",
@@ -151,7 +163,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 11. state.ood -------------------------------------------------------
+    # -- 12. state.ood -------------------------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="state.ood",
@@ -166,7 +178,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 12. autonomy.level_breach -------------------------------------------
+    # -- 13. autonomy.level_breach -------------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="autonomy.level_breach",
@@ -179,7 +191,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 13. model.confidence_floor ------------------------------------------
+    # -- 14. model.confidence_floor ------------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="model.confidence_floor",
@@ -191,7 +203,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 14. model.pool_disagreement -----------------------------------------
+    # -- 15. model.pool_disagreement -----------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="model.pool_disagreement",
@@ -206,7 +218,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 15. exec.freshness_at_execution -------------------------------------
+    # -- 16. exec.freshness_at_execution -------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="exec.freshness_at_execution",
@@ -219,7 +231,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 16. api.ibkr_health -------------------------------------------------
+    # -- 17. api.ibkr_health -------------------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="api.ibkr_health",
@@ -231,7 +243,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 17. api.ibkr_rate_limit ----------------------------------------------
+    # -- 18. api.ibkr_rate_limit ----------------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="api.ibkr_rate_limit",
@@ -244,7 +256,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 18. api.ibkr_session_invalid -----------------------------------------
+    # -- 19. api.ibkr_session_invalid -----------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="api.ibkr_session_invalid",
@@ -256,7 +268,7 @@ def create_blocking_rules() -> list[ComplianceRule]:
         )
     )
 
-    # -- 19. exec.quote_moved_since_brief -------------------------------------
+    # -- 20. exec.quote_moved_since_brief -------------------------------------
     rules.append(
         ComplianceRule(
             rule_id="exec.quote_moved_since_brief",
@@ -266,6 +278,26 @@ def create_blocking_rules() -> list[ComplianceRule]:
             description="Block when price moved beyond regime-adaptive threshold since brief",
             predicate=lambda ctx: abs(ctx.get("price_change_since_brief_pct", 0))
             > ctx.get("regime_adaptive_threshold", 0.003),
+        )
+    )
+
+    # -- 21. exec.participation_cap -------------------------------------------
+    rules.append(
+        ComplianceRule(
+            rule_id="exec.participation_cap",
+            rule_name="Participation Cap",
+            category="exec",
+            severity=RuleSeverity.BLOCK,
+            description="Order size must not exceed tier-adjusted ADV participation cap",
+            predicate=lambda ctx: (
+                (
+                    lambda order_size=float(ctx.get("order_size", 0)), adv=float(
+                        ctx.get("avg_daily_volume", 1)
+                    ), cap=float(ctx.get("participation_cap", 0.05)): adv
+                    <= 0
+                    or (abs(order_size) / adv) > cap
+                )()
+            ),
         )
     )
 

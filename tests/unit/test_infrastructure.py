@@ -215,17 +215,17 @@ class TestSchedulerService:
 
 
 class TestScheduledJobs:
-    """ScheduledJobs: get_all_jobs returns 13 definitions."""
+    """ScheduledJobs: get_all_jobs returns 14 definitions."""
 
     @pytest.mark.asyncio
-    async def test_get_all_jobs_returns_13(self, started_db):
-        """get_all_jobs() returns exactly 13 job definitions."""
+    async def test_get_all_jobs_returns_14(self, started_db):
+        """get_all_jobs() returns exactly 14 job definitions."""
         from midas.scheduler.jobs import ScheduledJobs
 
         jobs_svc = ScheduledJobs(started_db)
         jobs = jobs_svc.get_all_jobs()
 
-        assert len(jobs) == 13
+        assert len(jobs) == 14
 
     @pytest.mark.asyncio
     async def test_all_jobs_have_required_fields(self, started_db):
@@ -348,22 +348,26 @@ class TestOrderStateMachine:
 
         sm = OrderStateMachine(None)
 
-        # pending -> submitted
-        assert sm.can_transition(OrderStatus.PENDING, OrderStatus.SUBMITTED) is True
+        # pending -> submitted_pending
+        assert sm.can_transition(OrderStatus.PENDING, OrderStatus.SUBMITTED_PENDING) is True
         # pending -> cancelled
         assert sm.can_transition(OrderStatus.PENDING, OrderStatus.CANCELLED) is True
-        # submitted -> partial
-        assert sm.can_transition(OrderStatus.SUBMITTED, OrderStatus.PARTIAL) is True
-        # submitted -> filled
-        assert sm.can_transition(OrderStatus.SUBMITTED, OrderStatus.FILLED) is True
-        # submitted -> cancelled
-        assert sm.can_transition(OrderStatus.SUBMITTED, OrderStatus.CANCELLED) is True
-        # submitted -> rejected
-        assert sm.can_transition(OrderStatus.SUBMITTED, OrderStatus.REJECTED) is True
-        # partial -> filled
-        assert sm.can_transition(OrderStatus.PARTIAL, OrderStatus.FILLED) is True
-        # partial -> cancelled
-        assert sm.can_transition(OrderStatus.PARTIAL, OrderStatus.CANCELLED) is True
+        # submitted_pending -> submitted_waiting
+        assert (
+            sm.can_transition(OrderStatus.SUBMITTED_PENDING, OrderStatus.SUBMITTED_WAITING) is True
+        )
+        # submitted_pending -> working
+        assert sm.can_transition(OrderStatus.SUBMITTED_PENDING, OrderStatus.WORKING) is True
+        # submitted_pending -> rejected
+        assert sm.can_transition(OrderStatus.SUBMITTED_PENDING, OrderStatus.REJECTED) is True
+        # working -> partial_filled
+        assert sm.can_transition(OrderStatus.WORKING, OrderStatus.PARTIAL_FILLED) is True
+        # working -> filled
+        assert sm.can_transition(OrderStatus.WORKING, OrderStatus.FILLED) is True
+        # partial_filled -> filled
+        assert sm.can_transition(OrderStatus.PARTIAL_FILLED, OrderStatus.FILLED) is True
+        # partial_filled -> cancel_pending
+        assert sm.can_transition(OrderStatus.PARTIAL_FILLED, OrderStatus.CANCEL_PENDING) is True
         # filled -> reconciled
         assert sm.can_transition(OrderStatus.FILLED, OrderStatus.RECONCILED) is True
         # reconciled -> attributed
@@ -379,8 +383,8 @@ class TestOrderStateMachine:
         assert sm.can_transition(OrderStatus.PENDING, OrderStatus.FILLED) is False
         # pending cannot go to reconciled
         assert sm.can_transition(OrderStatus.PENDING, OrderStatus.RECONCILED) is False
-        # filled cannot go back to submitted
-        assert sm.can_transition(OrderStatus.FILLED, OrderStatus.SUBMITTED) is False
+        # filled cannot go back to submitted_pending
+        assert sm.can_transition(OrderStatus.FILLED, OrderStatus.SUBMITTED_PENDING) is False
         # reconciled cannot go back to filled
         assert sm.can_transition(OrderStatus.RECONCILED, OrderStatus.FILLED) is False
 
@@ -408,8 +412,10 @@ class TestOrderStateMachine:
 
         non_terminal = [
             OrderStatus.PENDING,
-            OrderStatus.SUBMITTED,
-            OrderStatus.PARTIAL,
+            OrderStatus.SUBMITTED_PENDING,
+            OrderStatus.SUBMITTED_WAITING,
+            OrderStatus.WORKING,
+            OrderStatus.PARTIAL_FILLED,
             OrderStatus.FILLED,
             OrderStatus.RECONCILED,
         ]
@@ -435,9 +441,9 @@ class TestOrderStateMachine:
             },
         )
 
-        result = await sm.transition(order_id, OrderStatus.SUBMITTED)
+        result = await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING)
 
-        assert result["status"] == "submitted"
+        assert result["status"] == "submitted_pending"
         assert result["previous_status"] == "pending"
 
     @pytest.mark.asyncio
@@ -482,17 +488,18 @@ class TestOrderStateMachine:
         )
 
         with pytest.raises(ValueError, match="[Tt]erminal"):
-            await sm.transition(order_id, OrderStatus.SUBMITTED)
+            await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING)
 
     def test_full_lifecycle_pending_to_attributed(self):
-        """Full happy path: pending -> submitted -> filled -> reconciled -> attributed."""
+        """Full happy path: pending -> submitted_pending -> working -> filled -> reconciled -> attributed."""
         from midas.execution.order_state import OrderStateMachine, OrderStatus
 
         sm = OrderStateMachine(None)
 
         chain = [
-            (OrderStatus.PENDING, OrderStatus.SUBMITTED),
-            (OrderStatus.SUBMITTED, OrderStatus.FILLED),
+            (OrderStatus.PENDING, OrderStatus.SUBMITTED_PENDING),
+            (OrderStatus.SUBMITTED_PENDING, OrderStatus.WORKING),
+            (OrderStatus.WORKING, OrderStatus.FILLED),
             (OrderStatus.FILLED, OrderStatus.RECONCILED),
             (OrderStatus.RECONCILED, OrderStatus.ATTRIBUTED),
         ]
@@ -536,7 +543,7 @@ class TestExecutionAgent:
         fill_result = await agent.handle_partial_fill(
             order_id, {"fill_price": 400.0, "fill_quantity": 40}
         )
-        assert fill_result["status"] == "partial"
+        assert fill_result["status"] == "partial_filled"
         assert fill_result["filled_quantity"] == 40
 
     @pytest.mark.asyncio

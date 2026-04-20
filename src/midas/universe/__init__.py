@@ -10,6 +10,7 @@ Ref: T-02-01 through T-02-07
 
 from midas.universe.etf_selection import (
     ETFCandidate,
+    FACTOR_MAP,
     detect_missing_exposures,
     score_etf,
     select_etfs,
@@ -24,6 +25,7 @@ from midas.universe.constraints import UniverseConstraint
 __all__ = [
     # ETF selection
     "ETFCandidate",
+    "FACTOR_MAP",
     "score_etf",
     "select_etfs",
     "detect_missing_exposures",

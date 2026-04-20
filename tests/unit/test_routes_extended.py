@@ -90,9 +90,11 @@ def _mock_db(
 
 async def _patch_get_db(db):
     import midas.api.routes as routes_mod
+    import midas.api.routes_extended as ext_mod
 
     original = routes_mod._get_db
     routes_mod._get_db = AsyncMock(return_value=db)
+    ext_mod._get_db = AsyncMock(return_value=db)
     return original, routes_mod
 
 

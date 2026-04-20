@@ -103,4 +103,59 @@ class BriefComposer:
             "brief": rendered_brief,
             "density_level": density_level,
             "provenance_links": provenance_links,
+            "dollar_impact": decision_context.get("dollar_impact", 0),
+            "thesis": brief_data.get("sections", {}).get("situation_summary", ""),
+            "if_approved": brief_data.get("sections", {}).get("if_approved", ""),
+            "if_rejected": brief_data.get("sections", {}).get("if_rejected", ""),
+            "historical_precedent": brief_data.get("sections", {}).get("historical_precedent", ""),
+            "what_would_change_mind": brief_data.get("sections", {}).get(
+                "what_would_change_mind", ""
+            ),
+            "sections": [
+                {
+                    "title": "Thesis",
+                    "content": brief_data.get("sections", {}).get("situation_summary", ""),
+                    "type": "thesis",
+                },
+                {
+                    "title": "Evidence",
+                    "content": brief_data.get("sections", {}).get("evidence_assessment", ""),
+                    "type": "evidence",
+                },
+                {
+                    "title": "Recommendation",
+                    "content": brief_data.get("sections", {}).get("recommendation", ""),
+                    "type": "recommendation",
+                },
+                {
+                    "title": "Counter-Evidence",
+                    "content": brief_data.get("sections", {}).get("counter_evidence", ""),
+                    "type": "counter",
+                },
+                {
+                    "title": "If Approved",
+                    "content": brief_data.get("sections", {}).get("if_approved", ""),
+                    "type": "if_approved",
+                },
+                {
+                    "title": "If Rejected",
+                    "content": brief_data.get("sections", {}).get("if_rejected", ""),
+                    "type": "if_rejected",
+                },
+                {
+                    "title": "Historical Precedent",
+                    "content": brief_data.get("sections", {}).get("historical_precedent", ""),
+                    "type": "precedent",
+                },
+                {
+                    "title": "What Would Change My Mind",
+                    "content": brief_data.get("sections", {}).get("what_would_change_mind", ""),
+                    "type": "flip_threshold",
+                },
+                {
+                    "title": "Risk Factors",
+                    "content": brief_data.get("sections", {}).get("risk_factors", ""),
+                    "type": "risk",
+                },
+            ],
         }

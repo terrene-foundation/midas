@@ -1,4 +1,4 @@
-"""13 scheduled job definitions for the Midas platform.
+"""14 scheduled job definitions for the Midas platform.
 
 Each job is a coroutine handler with a cron schedule. The scheduler
 calls these at the appropriate times; they can also be triggered
@@ -44,6 +44,11 @@ JOB_DEFINITIONS = [
     },
     {"job_id": "counterfactual_computation", "cron_expr": "0 22 * * 1-5", "description": "Nightly"},
     {"job_id": "pbt_challenger", "cron_expr": "0 0 1 * *", "description": "Monthly"},
+    {
+        "job_id": "kill_switch_auto_trip",
+        "cron_expr": "*/5 * * * *",
+        "description": "Every 5 min — evaluate auto-trip conditions",
+    },
     {"job_id": "health_check", "cron_expr": "*/5 * * * *", "description": "Every 5 minutes"},
     {"job_id": "nav_valuation", "cron_expr": "0 17 * * 1-5", "description": "End of day"},
     {"job_id": "paper_trading_report", "cron_expr": "0 9 * * 1", "description": "Weekly Monday"},
@@ -51,14 +56,14 @@ JOB_DEFINITIONS = [
 
 
 class ScheduledJobs:
-    """Defines all 13 background jobs."""
+    """Defines all 14 background jobs."""
 
     def __init__(self, db: DataFlow):
         self._db = db
         self._log = structlog.get_logger("midas.scheduler.jobs")
 
     def get_all_jobs(self) -> list[dict]:
-        """Return list of all 13 job definitions with handler callables."""
+        """Return list of all 14 job definitions with handler callables."""
         handler_map = {
             "eod_ingestion": self.eod_ingestion,
             "fundamentals_refresh": self._fundamentals_refresh,
@@ -70,6 +75,7 @@ class ScheduledJobs:
             "rebalance_check": self._rebalance_check,
             "counterfactual_computation": self._counterfactual_computation,
             "pbt_challenger": self._pbt_challenger,
+            "kill_switch_auto_trip": self._kill_switch_auto_trip,
             "health_check": self.health_check,
             "nav_valuation": self.nav_valuation,
             "paper_trading_report": self._paper_trading_report,
@@ -310,6 +316,98 @@ class ScheduledJobs:
         except Exception as exc:
             self._log.error("jobs.nav_valuation.error", error=str(exc))
             return {"success": False, "error": str(exc)}
+
+    async def _kill_switch_auto_trip(self, context: dict) -> dict:
+        """Evaluate kill switch auto-trip conditions every 5 minutes.
+
+        Per specs/08 § Kill Switch, Midas trips automatically when:
+        1. Drawdown crosses hard circuit-breaker ceiling
+        2. OOD z_t coincides with rapid NAV move
+        3. IBKR reports severe error
+        4. PACT policy breach detected
+        """
+        self._log.info("jobs.kill_switch_auto_trip.start")
+        try:
+            from midas.compliance.kill_switch import KillSwitch
+
+            ks = KillSwitch(self._db)
+
+            # Build context from fabric state
+            # Drawdown: read from positions or portfolio summary
+            positions = await self._db.express.list("positions")
+            envelope_rows = await self._db.express.list(
+                "notification_settings", filter={"user_id": 0}
+            )
+            envelope_cfg = {}
+            if envelope_rows:
+                import json
+
+                try:
+                    cfg = json.loads(envelope_rows[0].get("tiers_json", "{}"))
+                    envelope_cfg = cfg
+                except Exception:
+                    pass
+
+            # Get current drawdown from positions
+            drawdown_pct = 0.0
+            for p in positions:
+                if p.get("drawdown_pct") is not None:
+                    drawdown_pct = max(drawdown_pct, p.get("drawdown_pct", 0.0))
+
+            # OOD score: read pre-computed score stored by state_inference job
+            # The state_inference job computes and stores ood_score in latent_state
+            ood_score = 0.0
+            try:
+                rows = await self._db.express.list("latent_state", filter={})
+                if rows:
+                    latest = rows[-1] if rows else None
+                    if latest:
+                        ood_score = float(latest.get("ood_score", 0.0))
+            except Exception:
+                pass
+
+            # NAV move: read pre-computed nav values
+            # nav_valuation job stores nav in positions or a dedicated nav table
+            nav_move_pct = 0.0
+            try:
+                rows = await self._db.express.list("positions")
+                if rows:
+                    latest = rows[-1] if rows else None
+                    if latest:
+                        current_nav = float(latest.get("nav", 0.0) or 0.0)
+                        prior_nav = float(latest.get("prior_nav", 0.0) or 0.0)
+                        if prior_nav and prior_nav > 0:
+                            nav_move_pct = abs(current_nav - prior_nav) / prior_nav
+            except Exception:
+                pass
+
+            ctx = {
+                "drawdown_pct": drawdown_pct,
+                "drawdown_ceiling": envelope_cfg.get("drawdown_ceiling", 0.20),
+                "ood_score": ood_score,
+                "ood_threshold": 0.7,
+                "nav_move_pct": nav_move_pct,
+                "nav_move_rate": 0.03,
+                "ibkr_severe_error": False,  # wired when IBKR adapter emits error events
+                "pact_breach": False,  # wired when PACT engine detects breach
+            }
+
+            result = await ks.auto_evaluate(ctx)
+            self._log.info(
+                "jobs.kill_switch_auto_trip.ok",
+                tripped=result.get("tripped"),
+                condition=result.get("condition", "none"),
+                reason=result.get("reason"),
+            )
+            return {
+                "success": True,
+                "job": "kill_switch_auto_trip",
+                "tripped": result.get("tripped"),
+                "condition": result.get("condition"),
+            }
+        except Exception as exc:
+            self._log.error("jobs.kill_switch_auto_trip.error", error=str(exc))
+            return {"success": False, "job": "kill_switch_auto_trip", "error": str(exc)}
 
     async def _paper_trading_report(self, context: dict) -> dict:
         """Run weekly paper trading report."""

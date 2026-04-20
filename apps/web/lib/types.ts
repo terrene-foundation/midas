@@ -126,6 +126,41 @@ export interface BacktestResult {
   turnover: number | null;
   win_rate: number | null;
   equity_curve: Array<{ date: string; value: number }>;
+  regime_breakdown?: Array<{
+    name: string;
+    return_pct: number;
+    sharpe: number | null;
+    time_pct: number;
+  }>;
+  sub_horizons?: Array<{
+    label: string;
+    return: number | null;
+    periods: number;
+  }>;
+}
+
+export interface BacktestRegimeBreakdown {
+  run_id: string;
+  regimes: Array<{
+    name: string;
+    return_pct: number;
+    sharpe: number | null;
+    time_pct: number;
+  }>;
+}
+
+export interface BacktestConsistency {
+  run_id: string;
+  monthly: {
+    positive_periods: number;
+    total_periods: number;
+    positive_fraction: number;
+  };
+  quarterly: {
+    positive_periods: number;
+    total_periods: number;
+    positive_fraction: number;
+  };
 }
 
 export interface Signal {

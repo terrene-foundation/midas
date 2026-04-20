@@ -443,6 +443,27 @@ def _register_models(db: DataFlow) -> None:
         expires_at: str = ""
         revoked_at: str = ""
 
+    # -- 28. notification_settings --------------------------------------------
+    @db.model
+    class notification_settings:
+        id: int
+        user_id: int  # 0 for global default settings
+        tiers_json: str = "{}"  # JSON-serialized notification tiers
+        quiet_hours_start: str = "22:00"
+        quiet_hours_end: str = "07:00"
+        quiet_hours_timezone: str = "Asia/Singapore"
+        daily_attention_ceiling_minutes: int = 30
+
+    # -- 29. paper_live_settings -----------------------------------------------
+    @db.model
+    class paper_live_settings:
+        id: int
+        user_id: int  # 0 for global settings
+        paper_trading_active: bool = True
+        live_start_date: str = ""  # ISO date string when live mode began
+        report_acknowledged_at: str = ""  # ISO datetime user acknowledged the report
+        report_acknowledged_by: str = ""  # user identifier
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -477,6 +498,8 @@ FABRIC_TABLES: list[str] = [
     "compliance_rules",
     "users",
     "sessions",
+    "notification_settings",
+    "paper_live_settings",
 ]
 
 
