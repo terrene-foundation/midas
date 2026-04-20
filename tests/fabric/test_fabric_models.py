@@ -67,7 +67,7 @@ class TestFabricEngine:
 
     def test_fabric_tables_constant_matches(self):
         """T-01-01: FABRIC_TABLES constant has correct count."""
-        assert len(FABRIC_TABLES) == 27
+        assert len(FABRIC_TABLES) == 29
 
     def test_duplicate_free_table_list(self):
         """T-01-01: No duplicate table names."""
