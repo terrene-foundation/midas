@@ -66,3 +66,12 @@ secrets/
 **/scripts/data/
 **/scripts/outputs/
 **/scripts/*.log
+
+# Databases
+*.db
+
+# Build artifacts
+.next/
+
+# Claude Code worktrees
+.claude/worktrees/
