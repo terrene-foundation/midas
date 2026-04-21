@@ -19,12 +19,22 @@ class DebateTools:
     The LLM decides how to use the returned data.
     """
 
-    FABRIC_ALLOWLIST = frozenset({
-        "positions", "decisions", "latent_state", "audit_log",
-        "fabric_cache", "scheduler_jobs", "scheduler_status",
-        "paper_live_settings", "model_registry", "onboarding_state",
-        "notification_settings", "brief_history",
-    })
+    FABRIC_ALLOWLIST = frozenset(
+        {
+            "positions",
+            "decisions",
+            "latent_state",
+            "audit_log",
+            "fabric_cache",
+            "scheduler_jobs",
+            "scheduler_status",
+            "paper_live_settings",
+            "model_registry",
+            "onboarding_state",
+            "notification_settings",
+            "brief_history",
+        }
+    )
 
     def __init__(self, db):
         self._db = db
@@ -158,32 +168,110 @@ class DebateTools:
             "status": "ok",
         }
 
-    async def retrieve_analogue(self, situation_hash: str) -> list[dict]:
-        """Tool 4: Retrieve analogous historical situations.
+    async def retrieve_analogue(
+        self,
+        z_t: list[float],
+        *,
+        top_k: int = 5,
+        similarity_threshold: float = 0.6,
+    ) -> list[dict]:
+        """Tool 4: Retrieve analogous historical decisions by latent state similarity.
 
-        Searches the embeddings store for documents with similar content
-        hashes or latent state patterns.
+        Searches historical decisions in the fabric for states similar to the
+        provided z_t vector using cosine similarity over stored latent
+        representations.  Returns the top-K analogue decisions with their
+        outcomes so the Debate agent can ground arguments in precedent.
+
+        Per spec 07 S3.3: ``retrieve_analogue(z_t)`` fetches historical
+        analogues -- evidence from past.
 
         Parameters
         ----------
-        situation_hash:
-            Hash of the current situation to find analogues for.
+        z_t:
+            Current latent state vector from the posterior.
+        top_k:
+            Maximum number of analogues to return.
+        similarity_threshold:
+            Minimum cosine similarity (0-1) for an analogue to be included.
 
         Returns
         -------
         list[dict]
-            Similar historical situations.
+            Each dict contains ``similarity``, ``decision_id``, ``action``,
+            ``outcome``, and ``z_t_snapshot`` keys.
         """
-        logger.info("tools.retrieve_analogue", hash=situation_hash)
-        try:
-            rows = await self._db.express.list(
-                "embeddings", filter={"content_hash": situation_hash}
-            )
-        except Exception as exc:
-            logger.error("tools.retrieve_analogue_failed", error=str(exc))
+        logger.info(
+            "tools.retrieve_analogue",
+            z_dim=len(z_t),
+            top_k=top_k,
+            threshold=similarity_threshold,
+        )
+
+        if not z_t:
+            logger.warning("tools.retrieve_analogue.empty_z_t")
             return []
 
-        return rows
+        # Fetch historical decisions that have latent state snapshots
+        try:
+            decisions = await self._db.express.list(
+                "decisions",
+                filter={"decision_type": "rebalance"},
+            )
+        except Exception as exc:
+            logger.error("tools.retrieve_analogue.list_failed", error=str(exc))
+            return []
+
+        # Score each decision by cosine similarity of its z_t snapshot
+        scored: list[tuple[float, dict]] = []
+        for decision in decisions:
+            z_blob = decision.get("z_t_snapshot", "")
+            if not z_blob:
+                continue
+            try:
+                stored_z = json.loads(z_blob) if isinstance(z_blob, str) else z_blob
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            if not isinstance(stored_z, list) or len(stored_z) != len(z_t):
+                continue
+
+            similarity = self._cosine_similarity(z_t, stored_z)
+            if similarity >= similarity_threshold:
+                scored.append((similarity, decision))
+
+        # Sort by similarity descending, take top_k
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = []
+        for sim, dec in scored[:top_k]:
+            results.append(
+                {
+                    "similarity": round(sim, 4),
+                    "decision_id": dec.get("id", ""),
+                    "action": dec.get("action", ""),
+                    "outcome": dec.get("outcome", ""),
+                    "instruments": dec.get("instruments", ""),
+                    "brief_summary": dec.get("brief_summary", ""),
+                    "decided_at": dec.get("decided_at", ""),
+                }
+            )
+
+        logger.info(
+            "tools.retrieve_analogue.results",
+            total_candidates=len(decisions),
+            above_threshold=len(scored),
+            returned=len(results),
+        )
+        return results
+
+    @staticmethod
+    def _cosine_similarity(a: list[float], b: list[float]) -> float:
+        """Compute cosine similarity between two vectors."""
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = sum(x * x for x in a) ** 0.5
+        norm_b = sum(x * x for x in b) ** 0.5
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
 
     def _get_fixed_income_tickers(self) -> set[str]:
         """Return fixed income tickers from the universe factor map.
@@ -390,9 +478,7 @@ class DebateTools:
             return result
         except Exception as exc:
             logger.error("tools.update_decision_failed", error=str(exc))
-            return {"decision_id": decision_id, "status": "error", "error": str(exc)}
-
-    async def generate_counterfactual(self, decision_id: str) -> dict:
+            return {"decision_id": decision_id, "status": "error", "error": "Update failed"}
         """Tool 9: Generate counterfactual for a decision.
 
         Retrieves the original decision and constructs a counterfactual
@@ -413,7 +499,11 @@ class DebateTools:
             decision = await self._db.express.read("decisions", decision_id)
         except Exception as exc:
             logger.error("tools.generate_counterfactual_failed", error=str(exc))
-            return {"decision_id": decision_id, "status": "error", "error": str(exc)}
+            return {
+                "decision_id": decision_id,
+                "status": "error",
+                "error": "Failed to retrieve decision",
+            }
 
         original_action = decision.get("action", "unknown")
         counter_action = "buy" if "sell" in original_action.lower() else "sell"

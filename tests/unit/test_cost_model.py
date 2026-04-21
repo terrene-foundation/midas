@@ -12,6 +12,12 @@ from midas.execution.cost_model import (
     ExecutionCostModel,
     LiquidityTier,
     TIER_PARAMS,
+    DEFAULT_TAX_DRAG_BPS,
+    TIME_OF_DAY_MULTIPLIERS,
+    SLIPPAGE_REGIME_MULTIPLIERS,
+    SLIPPAGE_TIER_MULTIPLIERS,
+    GAP_TYPE_MULTIPLIERS,
+    GAP_REGIME_MULTIPLIERS,
 )
 
 
@@ -154,3 +160,144 @@ class TestTotalCost:
     def test_auto_classifies_tier(self, model):
         result = model.estimate_total_cost(10_000, 50_000_000, 0.02)
         assert result["tier"] == "L1"
+
+    def test_total_cost_includes_new_terms(self, model):
+        result = model.estimate_total_cost(
+            10_000, 1_000_000, 0.02, spread=0.001,
+            position_value=500_000, gap_type="overnight",
+        )
+        assert "tax" in result
+        assert "slippage" in result
+        assert "gap" in result
+        assert "total_cost" in result
+        assert "total_cost_p90" in result
+        assert result["total_cost"] > 0
+        assert result["total_cost_p90"] >= result["total_cost"]
+
+    def test_no_gap_when_type_is_none(self, model):
+        result = model.estimate_total_cost(10_000, 1_000_000, 0.02)
+        assert result["gap"]["gap_bps"] == 0.0
+        assert result["gap"]["gap_dollars"] == 0.0
+
+    def test_tax_advantaged_zero_tax(self, model):
+        result = model.estimate_total_cost(
+            10_000, 1_000_000, 0.02, tax_advantaged=True,
+        )
+        assert result["tax"]["tax_drag_bps"] == 0.0
+        assert result["tax"]["tax_drag_dollars"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Tax / dividend withholding drag (spec S2.4)
+# ---------------------------------------------------------------------------
+
+
+class TestTaxDrag:
+    def test_positive_position_generates_drag(self, model):
+        result = model.estimate_tax_drag(100_000)
+        assert result["tax_drag_bps"] > 0
+        assert result["tax_drag_dollars"] > 0
+
+    def test_tax_advantaged_zero(self, model):
+        result = model.estimate_tax_drag(100_000, tax_advantaged=True)
+        assert result["tax_drag_bps"] == 0.0
+        assert result["tax_drag_dollars"] == 0.0
+        assert result["tax_advantaged"] is True
+
+    def test_zero_position_zero_drag(self, model):
+        result = model.estimate_tax_drag(0)
+        assert result["tax_drag_dollars"] == 0.0
+
+    def test_longer_holding_higher_drag(self, model):
+        short = model.estimate_tax_drag(100_000, holding_period_days=30)
+        long = model.estimate_tax_drag(100_000, holding_period_days=365)
+        assert long["tax_drag_bps"] > short["tax_drag_bps"]
+
+    def test_default_drag_bps_is_0_5(self):
+        assert DEFAULT_TAX_DRAG_BPS == 0.5
+
+
+# ---------------------------------------------------------------------------
+# Execution slippage (spec S2.5)
+# ---------------------------------------------------------------------------
+
+
+class TestSlippage:
+    def test_basic_slippage(self, model):
+        result = model.estimate_slippage(0.02, 10_000, 1_000_000)
+        assert result["slippage_bps"] > 0
+        assert result["slippage_bps_p90"] > result["slippage_bps"]
+
+    def test_zero_vol_zero_slippage(self, model):
+        result = model.estimate_slippage(0.0, 10_000, 1_000_000)
+        assert result["slippage_bps"] == 0.0
+
+    def test_zero_adv_zero_slippage(self, model):
+        result = model.estimate_slippage(0.02, 10_000, 0)
+        assert result["slippage_bps"] == 0.0
+
+    def test_higher_regime_more_slippage(self, model):
+        calm = model.estimate_slippage(0.02, 10_000, 1_000_000, regime="calm")
+        crisis = model.estimate_slippage(0.02, 10_000, 1_000_000, regime="crisis")
+        assert crisis["slippage_bps"] > calm["slippage_bps"]
+
+    def test_thin_tier_more_slippage(self, model):
+        l1 = model.estimate_slippage(0.02, 10_000, 1_000_000, tier=LiquidityTier.L1_DEEP)
+        l4 = model.estimate_slippage(0.02, 10_000, 1_000_000, tier=LiquidityTier.L4_THIN)
+        assert l4["slippage_bps"] > l1["slippage_bps"]
+
+    def test_pre_open_wider_slippage(self, model):
+        normal = model.estimate_slippage(0.02, 10_000, 1_000_000, time_of_day="normal")
+        pre_open = model.estimate_slippage(0.02, 10_000, 1_000_000, time_of_day="pre_open")
+        assert pre_open["slippage_bps"] > normal["slippage_bps"]
+
+    def test_returns_tier_and_regime(self, model):
+        result = model.estimate_slippage(0.02, 10_000, 1_000_000, tier=LiquidityTier.L2_LIQUID, regime="elevated")
+        assert result["tier"] == "L2"
+        assert result["regime"] == "elevated"
+
+    def test_participation_rate_computed(self, model):
+        result = model.estimate_slippage(0.02, 10_000, 1_000_000)
+        assert abs(result["participation_rate"] - 0.01) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Gap risk (spec S2.6)
+# ---------------------------------------------------------------------------
+
+
+class TestGapRisk:
+    def test_overnight_gap(self, model):
+        result = model.estimate_gap_risk(100_000, 0.02, gap_type="overnight")
+        assert result["gap_bps"] > 0
+        assert result["gap_dollars"] > 0
+        assert result["gap_dollars_p90"] > result["gap_dollars"]
+
+    def test_zero_position_zero_gap(self, model):
+        result = model.estimate_gap_risk(0, 0.02, gap_type="overnight")
+        assert result["gap_bps"] == 0.0
+        assert result["gap_dollars"] == 0.0
+
+    def test_earnings_gap_largest(self, model):
+        overnight = model.estimate_gap_risk(100_000, 0.02, gap_type="overnight")
+        earnings = model.estimate_gap_risk(100_000, 0.02, gap_type="earnings")
+        assert earnings["gap_bps"] > overnight["gap_bps"]
+
+    def test_crisis_regime_amplifies_gap(self, model):
+        calm = model.estimate_gap_risk(100_000, 0.02, gap_type="overnight", regime="calm")
+        crisis = model.estimate_gap_risk(100_000, 0.02, gap_type="overnight", regime="crisis")
+        assert crisis["gap_bps"] > calm["gap_bps"]
+
+    def test_higher_vol_larger_gap(self, model):
+        low_vol = model.estimate_gap_risk(100_000, 0.01, gap_type="overnight")
+        high_vol = model.estimate_gap_risk(100_000, 0.05, gap_type="overnight")
+        assert high_vol["gap_bps"] > low_vol["gap_bps"]
+
+    def test_returns_gap_type(self, model):
+        result = model.estimate_gap_risk(100_000, 0.02, gap_type="weekend")
+        assert result["gap_type"] == "weekend"
+
+    def test_all_gap_types_produce_positive_risk(self, model):
+        for gap_type in ("overnight", "weekend", "holiday", "halt_resume", "earnings"):
+            result = model.estimate_gap_risk(100_000, 0.02, gap_type=gap_type)
+            assert result["gap_bps"] > 0, f"gap_type={gap_type} produced zero gap"

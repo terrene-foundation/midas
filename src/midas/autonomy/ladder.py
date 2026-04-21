@@ -64,11 +64,64 @@ class AutonomyState:
         return d
 
 
+# Spec-compliant demotion trigger mapping per specs/08 S4.
+# Maps trigger names to the target autonomy level for each current level.
+DEMOTE_TARGET: dict[str, dict[int, int]] = {
+    "drawdown_breach": {
+        # Drawdown breaches a configured fraction of the envelope ceiling
+        # L3/L4 -> L1 per spec table in S4
+        3: 1,
+        4: 1,
+    },
+    "crisis_band": {
+        # Crisis band entered: L3/L4 -> L2 for the duration
+        3: 2,
+        4: 2,
+    },
+    "kill_switch": {
+        # Kill switch activation: any level -> L0
+        0: 0,
+        1: 0,
+        2: 0,
+        3: 0,
+        4: 0,
+    },
+    "model_failure": {
+        # Champion model demoted / model health failure
+        # L3/L4 -> L2 until the new champion proves calibration
+        3: 2,
+        4: 2,
+    },
+    "ood_detected": {
+        # OOD z_t detected: L3/L4 -> L2 for the duration
+        3: 2,
+        4: 2,
+    },
+    "override_rate": {
+        # User override rate exceeds threshold
+        # L3 -> L2 or L2 -> L1 depending on magnitude
+        3: 2,
+        2: 1,
+    },
+    "calibration_drift": {
+        # Calibration drift: hold at current level, but no new promotions.
+        # Falls through to single-level demotion as a conservative signal.
+        4: 3,
+        3: 2,
+    },
+}
+
+
 class AutonomyLadder:
     """L0 to L4 state machine with typed transitions.
 
     State is held in-memory and mirrored to the audit_log for durable
     audit trail.  Every transition writes an audit record.
+
+    Demotion supports both single-level drops (legacy ``demote()``) and
+    spec-compliant multi-level demotion via ``demote_to()``.  Trigger-
+    specific target levels are defined in ``DEMOTE_TARGET`` per
+    specs/08-autonomy-and-trust.md S4.
     """
 
     def __init__(self, db: DataFlow):
@@ -333,6 +386,147 @@ class AutonomyLadder:
             "new_level": int(new_level),
             "reason": reason,
         }
+
+    async def demote_to(
+        self,
+        target_level: AutonomyLevel,
+        reason: str,
+        trigger: str,
+    ) -> dict[str, Any]:
+        """Demote directly to a target level, possibly skipping multiple levels.
+
+        Used by the trigger-specific demotion mapping per specs/08 S4.
+        This allows e.g. a drawdown breach to drop from L4 directly to L1
+        without stopping at L3 and L2 along the way.
+
+        Parameters
+        ----------
+        target_level:
+            The level to demote to.  Must be lower than the current level.
+        reason:
+            Human-readable reason for the demotion.
+        trigger:
+            Trigger identifier (e.g. ``drawdown_breach``, ``kill_switch``).
+
+        Returns
+        -------
+        dict
+            Keys: ``success``, ``new_level``, ``reason``.
+        """
+        current = self._state.current_level
+
+        if current == AutonomyLevel.L0:
+            self._log.info("autonomy.demote_to_floor", reason=reason, trigger=trigger)
+            return {
+                "success": True,
+                "new_level": int(AutonomyLevel.L0),
+                "reason": "Already at L0; no further demotion possible",
+            }
+
+        # Validate that target is actually lower
+        if target_level >= current:
+            self._log.warning(
+                "autonomy.demote_to_invalid",
+                current=int(current),
+                target=int(target_level),
+                trigger=trigger,
+            )
+            return {
+                "success": False,
+                "new_level": int(current),
+                "reason": (
+                    f"Cannot demote_to L{int(target_level)} from L{int(current)}; "
+                    f"target must be lower than current"
+                ),
+            }
+
+        self._state = AutonomyState(
+            current_level=target_level,
+            entered_at=datetime.now(timezone.utc).isoformat(),
+            promotion_count=self._state.promotion_count,
+            demotion_count=self._state.demotion_count + 1,
+            days_at_current_level=0,
+            first_seven_days_active=self._state.first_seven_days_active,
+            live_start_date=self._state.live_start_date,
+        )
+
+        await self._write_audit(
+            action="demotion",
+            details={
+                "from_level": int(current),
+                "to_level": int(target_level),
+                "reason": reason,
+                "trigger": trigger,
+                "multi_level": True,
+            },
+        )
+
+        self._log.info(
+            "autonomy.demoted_to",
+            from_level=int(current),
+            to_level=int(target_level),
+            trigger=trigger,
+            levels_dropped=int(current) - int(target_level),
+        )
+
+        return {
+            "success": True,
+            "new_level": int(target_level),
+            "reason": reason,
+        }
+
+    async def demote_by_trigger(self, trigger: str, reason: str) -> dict[str, Any]:
+        """Demote using the trigger-specific mapping from specs/08 S4.
+
+        Looks up the ``DEMOTE_TARGET`` table for the given trigger and
+        current level to determine the target level, then delegates to
+        ``demote_to``.  Falls back to single-level ``demote`` if the
+        trigger has no mapping for the current level.
+
+        Parameters
+        ----------
+        trigger:
+            Trigger identifier matching a key in ``DEMOTE_TARGET``.
+        reason:
+            Human-readable reason for the demotion.
+
+        Returns
+        -------
+        dict
+            Keys: ``success``, ``new_level``, ``reason``.
+        """
+        current = self._state.current_level
+        trigger_map = DEMOTE_TARGET.get(trigger)
+
+        if trigger_map is None:
+            # Unknown trigger: fall back to single-level demotion
+            self._log.info(
+                "autonomy.demote_by_trigger.unknown_trigger",
+                trigger=trigger,
+                fallback=True,
+            )
+            return await self.demote(reason=reason, trigger=trigger)
+
+        target = trigger_map.get(int(current))
+        if target is None:
+            # No mapping for current level: either already below the
+            # trigger's concern, or at L0.  No-op.
+            self._log.info(
+                "autonomy.demote_by_trigger.no_mapping",
+                trigger=trigger,
+                current_level=int(current),
+            )
+            return {
+                "success": True,
+                "new_level": int(current),
+                "reason": f"Trigger '{trigger}' has no demotion mapping for L{int(current)}",
+            }
+
+        return await self.demote_to(
+            target_level=AutonomyLevel(target),
+            reason=reason,
+            trigger=trigger,
+        )
 
     async def check_upgrade_contract(
         self,

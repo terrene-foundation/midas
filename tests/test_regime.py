@@ -406,20 +406,13 @@ class TestRegimeRendererRender:
 
     def test_weights_sum_to_one(self):
         """Verify internal weight constants sum to 1.0."""
-        assert RegimeRenderer._W_VOL == pytest.approx(0.30)
-        assert RegimeRenderer._W_OOD == pytest.approx(0.25)
-        assert RegimeRenderer._W_TRANSITION == pytest.approx(0.15)
-        assert RegimeRenderer._W_VARIANCE == pytest.approx(0.15)
-        assert RegimeRenderer._W_DISAGREEMENT == pytest.approx(0.10)
-        assert RegimeRenderer._W_DRAWDOWN_VELOCITY == pytest.approx(0.05)
-        total = (
-            RegimeRenderer._W_VOL
-            + RegimeRenderer._W_OOD
-            + RegimeRenderer._W_TRANSITION
-            + RegimeRenderer._W_VARIANCE
-            + RegimeRenderer._W_DISAGREEMENT
-            + RegimeRenderer._W_DRAWDOWN_VELOCITY
-        )
+        assert RegimeRenderer._DEFAULT_WEIGHTS[0] == pytest.approx(0.30)
+        assert RegimeRenderer._DEFAULT_WEIGHTS[1] == pytest.approx(0.25)
+        assert RegimeRenderer._DEFAULT_WEIGHTS[2] == pytest.approx(0.15)
+        assert RegimeRenderer._DEFAULT_WEIGHTS[3] == pytest.approx(0.15)
+        assert RegimeRenderer._DEFAULT_WEIGHTS[4] == pytest.approx(0.10)
+        assert RegimeRenderer._DEFAULT_WEIGHTS[5] == pytest.approx(0.05)
+        total = sum(RegimeRenderer._DEFAULT_WEIGHTS)
         assert total == pytest.approx(1.0)
 
     # -- a_t computation correctness --

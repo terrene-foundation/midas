@@ -51,12 +51,16 @@ class MVOBaseline:
         Uses analytical solution: w = (1/gamma) * Sigma^{-1} * mu
         """
         try:
-            inv_cov = np.linalg.inv(cov_matrix)
+            d = cov_matrix.shape[0]
+            inv_cov = np.linalg.inv(cov_matrix + 1e-6 * np.eye(d))
         except np.linalg.LinAlgError:
             inv_cov = np.linalg.pinv(cov_matrix)
         raw_weights = inv_cov @ expected_returns / risk_aversion
-        # Normalize to sum to 1
-        weights = raw_weights / raw_weights.sum()
+        weight_sum = raw_weights.sum()
+        # Guard against all-zero weights producing NaN in normalization
+        if weight_sum == 0.0:
+            return raw_weights
+        weights = raw_weights / weight_sum
         return weights
 
 
@@ -83,14 +87,18 @@ class BlackLittermanBaseline:
         omega = np.diag(1.0 / view_confidences)
 
         try:
-            bl_returns = np.linalg.inv(
-                np.linalg.inv(tau * cov_matrix) + P.T @ np.linalg.inv(omega) @ P
-            ) @ (np.linalg.inv(tau * cov_matrix) @ prior_returns + P.T @ np.linalg.inv(omega) @ Q)
+            d = cov_matrix.shape[0]
+            tau_cov_inv = np.linalg.inv(tau * cov_matrix + 1e-6 * np.eye(d))
+            omega_inv = np.linalg.inv(omega + 1e-6 * np.eye(len(view_confidences)))
+            bl_returns = np.linalg.inv(tau_cov_inv + P.T @ omega_inv @ P) @ (
+                tau_cov_inv @ prior_returns + P.T @ omega_inv @ Q
+            )
         except np.linalg.LinAlgError:
             bl_returns = prior_returns
 
         try:
-            inv_cov = np.linalg.inv(cov_matrix)
+            d = cov_matrix.shape[0]
+            inv_cov = np.linalg.inv(cov_matrix + 1e-6 * np.eye(d))
         except np.linalg.LinAlgError:
             inv_cov = np.linalg.pinv(cov_matrix)
 

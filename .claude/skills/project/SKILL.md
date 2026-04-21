@@ -12,11 +12,11 @@ Skills for the Midas autonomous investment assistant — a latent-first, evidenc
 
 ## Safety, Quality & Evaluation
 
-| Skill                                                      | Purpose                                                                                                            |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [midas-security-checklist.md](midas-security-checklist.md) | Ten security patterns from red team validation (kill switch, credential leaks, NaN guards, auth middleware)        |
-| [debate-agent-contract.md](debate-agent-contract.md)       | Debate agent must mutate decisions (not narrate), non-sycophancy rules, tool suite, error handling                 |
-| [evaluation-probes.md](evaluation-probes.md)               | Evaluation probe suite — calibration, router overfitting, shadow lane isolation, track record gates, safety probes |
+| Skill                                                      | Purpose                                                                                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [midas-security-checklist.md](midas-security-checklist.md) | Security patterns from red team rounds 1-7 (IDOR, rate limiting, re-auth, DB safety, kill switch persistence, NaN guards) |
+| [debate-agent-contract.md](debate-agent-contract.md)       | Debate agent must mutate decisions (not narrate), non-sycophancy rules, tool suite, error handling                        |
+| [evaluation-probes.md](evaluation-probes.md)               | Evaluation probe suite — calibration, router overfitting, shadow lane isolation, track record gates, safety probes        |
 
 ## Key Principles (Quick Reference)
 

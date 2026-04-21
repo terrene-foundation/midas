@@ -7,10 +7,18 @@ Ref: M16 — Risk metrics
 """
 
 from dataclasses import dataclass
+import logging
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 TRADING_DAYS_PER_YEAR = 252
+
+# Bounded sentinel for infinite ratio values — NaN/Inf flowing into the compliance
+# engine causes silent pass on checks (NaN comparisons always return False).
+_INF_SENTINEL = 1e10
+_NEG_INF_SENTINEL = -1e10
 
 
 class RiskMetrics:
@@ -80,8 +88,10 @@ class RiskMetrics:
         # Downside deviation: only negative excess returns
         downside = returns[returns < target_return] - target_return
         if len(downside) == 0:
-            # No downside returns: Sortino is infinite, but return a large number
-            return float("inf") if mean_excess > 0 else 0.0
+            # No downside returns — Sortino is technically infinite.
+            # Return bounded sentinel to avoid NaN/Inf flowing into compliance checks.
+            logger.warning("risk_metrics.sortino_infinite mean_excess=%.6f", mean_excess)
+            return _INF_SENTINEL if mean_excess > 0 else 0.0
 
         downside_std = float(np.sqrt(np.mean(downside**2)))
 
@@ -114,7 +124,8 @@ class RiskMetrics:
         mdd = RiskMetrics.max_drawdown(equity)
 
         if mdd == 0.0:
-            return float("inf")
+            logger.warning("risk_metrics.calmar_infinite mdd=%.6f", mdd)
+            return _INF_SENTINEL
 
         mean_return = float(np.mean(returns))
         if annualize:
@@ -223,11 +234,14 @@ class RiskMetrics:
         te = float(np.std(active, ddof=1))
 
         if te == 0.0:
-            # No tracking error: if active return is zero, return 0;
-            # otherwise, return inf.
+            # No tracking error — return bounded sentinel to avoid NaN/Inf in compliance checks.
+            logger.warning(
+                "risk_metrics.information_ratio_infinite mean_active=%.6f te=%.6f",
+                mean_active, te,
+            )
             if mean_active == 0.0:
-                return float("nan")
-            return float("inf") if mean_active > 0 else float("-inf")
+                return 0.0
+            return _INF_SENTINEL if mean_active > 0 else _NEG_INF_SENTINEL
 
         # Annualize both numerator and denominator consistently
         annualized_mean = mean_active * TRADING_DAYS_PER_YEAR

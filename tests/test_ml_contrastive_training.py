@@ -35,12 +35,13 @@ class TestContrastiveEncoderTraining:
         z = model.encode(x)
         assert z.shape == (4, 16)
 
-    def test_contrastive_forward_returns_embedding(self):
-        """forward() returns embedding (same as encode)."""
+    def test_contrastive_forward_returns_z_and_recon(self):
+        """forward() returns (z_t, reconstruction) tuple."""
         model = ContrastiveEncoder(input_dim=20, latent_dim=16)
         x = torch.randn(4, 60, 20)
-        z = model(x)
+        z, recon = model(x)
         assert z.shape == (4, 16)
+        assert recon.shape == (4, 60, 20)
 
     def test_contrastive_gradient_flow(self):
         """Loss backward updates all parameters."""
@@ -49,11 +50,10 @@ class TestContrastiveEncoderTraining:
 
         model.train()
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        optimizer.zero_grad()
 
-        # Contrastive loss: similar items should be close
-        z = model.encode(X)
-        # Simple InfoNCE-style: encourage same-sample consistency
-        loss = torch.nn.functional.mse_loss(z, z.detach())  # trivial loss, just checks gradient
+        z, recon = model(X)
+        loss = torch.nn.functional.mse_loss(recon, X)
         loss.backward()
 
         for p in model.parameters():

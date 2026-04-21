@@ -44,22 +44,25 @@ class TestVAETraining:
         assert z2.shape == (4, 16)
 
     def test_vae_forward_returns_z_and_recon(self):
-        """forward() returns (z, recon, mu, logvar)."""
+        """forward() returns (z, recon) 2-tuple."""
         model = VariationalAutoencoder(input_dim=20, latent_dim=16)
         x = torch.randn(4, 60, 20)
         result = model(x)
         assert isinstance(result, tuple)
-        assert len(result) == 4  # z, recon, mu, logvar
-        z, recon, mu, logvar = result
+        assert len(result) == 2  # z, recon
+        z, recon = result
         assert z.shape == (4, 16)
-        assert recon.shape == (4, 60, 20)  # full-sequence reconstruction matches input shape
+        assert recon.shape == (4, 60, 20)
 
     def test_vae_kl_divergence_is_positive(self):
         """KL divergence term is always non-negative."""
         model = VariationalAutoencoder(input_dim=20, latent_dim=16)
         x = torch.randn(4, 60, 20)
 
-        z, recon, mu, logvar = model(x)
+        model(x)  # triggers forward, stores mu/logvar
+        kl_params = model.last_kl_params
+        assert kl_params is not None
+        mu, logvar = kl_params
 
         # KL = -0.5 * sum(1 + logvar - mu^2 - exp(logvar))
         kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
@@ -74,10 +77,10 @@ class TestVAETraining:
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         optimizer.zero_grad()
 
-        z, recon, mu, logvar = model(X)
-        # VAE loss: MSE recon + KL
-        # recon has full-sequence shape matching X
+        z, recon = model(X)
+        # VAE loss: MSE recon + KL (via encode_detailed)
         recon_loss = torch.nn.functional.mse_loss(recon, X)
+        _, mu, logvar = model.encode_detailed(X)
         kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         loss = recon_loss + 0.01 * kl
         loss.backward()

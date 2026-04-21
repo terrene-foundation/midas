@@ -16,6 +16,8 @@ Ref: T-04-01 through T-04-06
 
 from midas.state_inference.bayesian_filter import (
     DeepBayesianFilter,
+    EnergyBasedChallenger,
+    GPSSMHybridChallenger,
     NeuralKalmanChallenger,
     NormalizingFlowChallenger,
 )
@@ -27,6 +29,8 @@ from midas.state_inference.posterior_service import PosteriorMaintenanceService
 __all__ = [
     "ChangePointDetector",
     "DeepBayesianFilter",
+    "EnergyBasedChallenger",
+    "GPSSMHybridChallenger",
     "NeuralKalmanChallenger",
     "NormalizingFlowChallenger",
     "OODDetector",

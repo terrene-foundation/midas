@@ -1,6 +1,6 @@
 # Midas Security Checklist
 
-Ten specific security and quality patterns found during red team validation (commits 04b1125 through ee8fe28). These are the patterns this codebase already exhibited — check every new module against this list before commit.
+Security and quality patterns codified from red team rounds 1–7 (commits 04b1125 through ebfbad4). Check every new module against this list before commit.
 
 ---
 
@@ -8,6 +8,7 @@ Ten specific security and quality patterns found during red team validation (com
 
 - **MUST require confirmation_code + user_approved** — a body boolean alone is spoofable
 - **MUST NOT auto-clear** — only user action clears it
+- **Confirmation code hash persisted in audit_log** — instance vars lost on worker restart
 - Test: verify rejection when `confirmation_code` is missing
 
 ## Credential Leaks
@@ -27,11 +28,63 @@ Ten specific security and quality patterns found during red team validation (com
 - **MUST authenticate all non-health endpoints** — Bearer or ApiKey tokens
 - Health endpoints (`/api/v1/health/*`, `/docs`, `/openapi.json`) are public
 - Dev mode (no `MIDAS_API_KEY` env var) passes all requests through
+- **Re-auth required for sensitive operations** — approve/decline decisions require X-Reauth-Token (5-min JWT with `type=reauth`)
+
+## Rate Limiting
+
+- **Per-IP sliding-window** — 60 requests/minute, custom implementation (no external deps)
+- Returns `X-RateLimit-Remaining` header on every response
+- Accounts for `X-Forwarded-For` proxy header
+- Test: verify 429 response after exceeding limit
+
+## IDOR Protection
+
+- **Mutation endpoints MUST verify ownership** — extract JWT `sub` from `request.state.user`, compare to resource `user_id`
+- Applies to: modify_decision, resolve debate, paper-live transition
+- Raises 403 on mismatch
+
+```python
+# DO
+async def modify_decision(self, decision_id, request, body):
+    user = request.state.user
+    decision = await db.express.read("Decision", decision_id)
+    if decision.get("user_id") != user.get("sub"):
+        raise HTTPException(403, "Not authorized")
+
+# DO NOT
+async def modify_decision(self, decision_id, body):
+    # no auth check — any authenticated user can modify any decision
+```
 
 ## Health Endpoints
 
-- **MUST check real infrastructure** — database URL, broker connectivity, data source keys
+- **MUST check real infrastructure** — adapter health status, not config key presence
 - MUST NOT return `{"status": "healthy"}` unconditionally
+- MUST NOT leak which env vars are set or which adapters are configured
+
+## Database Access
+
+- **`_get_db()` raises HTTPException(503)** — never returns None
+- Callers MUST NOT check `if db is None` — the 503 is raised before return
+- Use try/except HTTPException around `_get_db()` calls
+
+## Password Hashing
+
+- **bcrypt for primary** — `bcrypt.hashpw()` with salt
+- **PBKDF2-HMAC-SHA256 fallback** — 600,000 iterations when bcrypt unavailable
+- **SHA-256 fallback is BLOCKED** — insufficient for production
+
+## Session Security
+
+- **Concurrent refresh token detection** — if a refresh token is used while another session exists for the same user, revoke ALL sessions
+- **Mass revocation on concurrent use** — prevents token theft from going undetected
+- Log WARN on detection
+
+## Silent Exceptions
+
+- **MUST log before falling back** — `except Exception: return []` without logging is BLOCKED
+- Acceptable: cleanup/teardown paths (db.close, os.unlink, CancelledError)
+- Search: `grep -A3 "except.*:" src/midas/ | grep -B3 "pass\|return None\|return \[\]"`
 
 ## Debate Agent
 
@@ -43,28 +96,24 @@ Ten specific security and quality patterns found during red team validation (com
 - **MUST use lazy imports for optional modules** — `try: from midas.X import Y; except ImportError: ...`
 - **MUST NOT use placeholder strings** like `"computed_from_z_t"` as fake outputs
 
-## Silent Exceptions
-
-- **MUST log before falling back** — `except Exception: return []` without logging is BLOCKED
-- Acceptable: cleanup/teardown paths (db.close, os.unlink, CancelledError)
-- Search: `grep -A3 "except.*:" src/midas/ | grep -B3 "pass\|return None\|return \[\]"`
-
 ## Kill Switch Confirmation
 
 ```python
-# DO
-async def clear_kill_switch(self, body):
-    confirmation_code = body.get("confirmation_code", "")
-    user_approved = body.get("user_approved", False)
-    if not user_approved:
-        raise HTTPException(400, "User approval required")
-    if not confirmation_code:
-        raise HTTPException(400, "Confirmation code required")
+# DO — hash persisted in audit_log, survives worker restart
+async def activate(self, db):
+    code = secrets.token_hex(8)
+    code_hash = hashlib.sha256(code.encode()).hexdigest()
+    await db.express.create("AuditLog", {
+        "action": "kill_switch_activate",
+        "details": {"confirmation_code_hash": code_hash},
+    })
+    return {"confirmation_code": code}
 
-# DO NOT
-async def clear_kill_switch(self, body):
-    if body.get("user_approved"):
-        return {"status": "cleared"}  # spoofable
+async def clear(self, db, body):
+    log = await db.express.list("AuditLog", {"action": "kill_switch_activate"})
+    stored_hash = log[-1]["details"]["confirmation_code_hash"]
+    if not hmac.compare_digest(hashlib.sha256(body["code"].encode()).hexdigest(), stored_hash):
+        raise HTTPException(400, "Invalid confirmation code")
 ```
 
 ## NaN Guard Pattern

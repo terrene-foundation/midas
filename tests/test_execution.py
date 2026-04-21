@@ -117,24 +117,31 @@ class TestOrderStatusConstants:
 
         expected = {
             "pending",
-            "submitted",
-            "partial",
+            "submitted_pending",
+            "submitted_waiting",
+            "working",
+            "partial_filled",
             "filled",
             "reconciled",
             "attributed",
+            "cancel_pending",
             "cancelled",
+            "cancelled_api",
+            "inactive_flagged",
             "rejected",
         }
         for status in expected:
-            assert getattr(OrderStatus, status.upper()) == status
+            attr = status.upper()
+            assert getattr(OrderStatus, attr) == status
 
     def test_all_tuple_contains_every_status(self):
         from midas.execution.order_state import OrderStatus
 
-        assert len(OrderStatus.ALL) == 8
+        assert len(OrderStatus.ALL) == 13
         assert OrderStatus.PENDING in OrderStatus.ALL
-        assert OrderStatus.SUBMITTED in OrderStatus.ALL
-        assert OrderStatus.PARTIAL in OrderStatus.ALL
+        assert OrderStatus.SUBMITTED_PENDING in OrderStatus.ALL
+        assert OrderStatus.WORKING in OrderStatus.ALL
+        assert OrderStatus.PARTIAL_FILLED in OrderStatus.ALL
         assert OrderStatus.FILLED in OrderStatus.ALL
         assert OrderStatus.RECONCILED in OrderStatus.ALL
         assert OrderStatus.ATTRIBUTED in OrderStatus.ALL
@@ -150,11 +157,11 @@ class TestOrderStatusConstants:
 class TestOrderStateMachineTransitions:
     """Tests for valid and invalid state machine transitions."""
 
-    def test_can_transition_pending_to_submitted(self):
+    def test_can_transition_pending_to_submitted_pending(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.PENDING, OrderStatus.SUBMITTED) is True
+        assert sm.can_transition(OrderStatus.PENDING, OrderStatus.SUBMITTED_PENDING) is True
 
     def test_can_transition_pending_to_cancelled(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
@@ -168,41 +175,41 @@ class TestOrderStateMachineTransitions:
         sm = OrderStateMachine()
         assert sm.can_transition(OrderStatus.PENDING, OrderStatus.FILLED) is False
 
-    def test_can_transition_submitted_to_partial(self):
+    def test_can_transition_submitted_pending_to_working(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.SUBMITTED, OrderStatus.PARTIAL) is True
+        assert sm.can_transition(OrderStatus.SUBMITTED_PENDING, OrderStatus.WORKING) is True
 
-    def test_can_transition_submitted_to_filled(self):
+    def test_can_transition_working_to_filled(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.SUBMITTED, OrderStatus.FILLED) is True
+        assert sm.can_transition(OrderStatus.WORKING, OrderStatus.FILLED) is True
 
-    def test_can_transition_submitted_to_cancelled(self):
+    def test_can_transition_submitted_pending_to_cancel_pending(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.SUBMITTED, OrderStatus.CANCELLED) is True
+        assert sm.can_transition(OrderStatus.SUBMITTED_PENDING, OrderStatus.CANCEL_PENDING) is True
 
-    def test_can_transition_submitted_to_rejected(self):
+    def test_can_transition_submitted_pending_to_rejected(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.SUBMITTED, OrderStatus.REJECTED) is True
+        assert sm.can_transition(OrderStatus.SUBMITTED_PENDING, OrderStatus.REJECTED) is True
 
-    def test_can_transition_partial_to_filled(self):
+    def test_can_transition_partial_filled_to_filled(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.PARTIAL, OrderStatus.FILLED) is True
+        assert sm.can_transition(OrderStatus.PARTIAL_FILLED, OrderStatus.FILLED) is True
 
-    def test_can_transition_partial_to_cancelled(self):
+    def test_can_transition_partial_filled_to_cancel_pending(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.PARTIAL, OrderStatus.CANCELLED) is True
+        assert sm.can_transition(OrderStatus.PARTIAL_FILLED, OrderStatus.CANCEL_PENDING) is True
 
     def test_can_transition_filled_to_reconciled(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
@@ -216,17 +223,17 @@ class TestOrderStateMachineTransitions:
         sm = OrderStateMachine()
         assert sm.can_transition(OrderStatus.RECONCILED, OrderStatus.ATTRIBUTED) is True
 
-    def test_cannot_transition_submitted_to_pending(self):
+    def test_cannot_transition_working_to_pending(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.SUBMITTED, OrderStatus.PENDING) is False
+        assert sm.can_transition(OrderStatus.WORKING, OrderStatus.PENDING) is False
 
-    def test_cannot_transition_filled_to_submitted(self):
+    def test_cannot_transition_filled_to_working(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.FILLED, OrderStatus.SUBMITTED) is False
+        assert sm.can_transition(OrderStatus.FILLED, OrderStatus.WORKING) is False
 
 
 class TestOrderStateMachineTerminalStates:
@@ -256,11 +263,11 @@ class TestOrderStateMachineTerminalStates:
         sm = OrderStateMachine()
         assert sm.is_terminal(OrderStatus.PENDING) is False
 
-    def test_submitted_is_not_terminal(self):
+    def test_working_is_not_terminal(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         sm = OrderStateMachine()
-        assert sm.is_terminal(OrderStatus.SUBMITTED) is False
+        assert sm.is_terminal(OrderStatus.WORKING) is False
 
     def test_filled_is_not_terminal(self):
         from midas.execution.order_state import OrderStatus, OrderStateMachine
@@ -278,15 +285,15 @@ class TestOrderStateMachineTransition:
 
         order_id = await _create_test_order(started_db)
         sm = OrderStateMachine(started_db)
-        result = await sm.transition(order_id, OrderStatus.SUBMITTED)
+        result = await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING)
 
         assert result["order_id"] == order_id
-        assert result["status"] == OrderStatus.SUBMITTED
+        assert result["status"] == OrderStatus.SUBMITTED_PENDING
         assert result["previous_status"] == OrderStatus.PENDING
 
         # Verify the order was actually updated in the database
         order = await started_db.express.read("orders", order_id)
-        assert order["status"] == OrderStatus.SUBMITTED
+        assert order["status"] == OrderStatus.SUBMITTED_PENDING
 
     @pytest.mark.asyncio
     async def test_valid_transition_creates_audit_record(self, started_db):
@@ -294,7 +301,7 @@ class TestOrderStateMachineTransition:
 
         order_id = await _create_test_order(started_db)
         sm = OrderStateMachine(started_db)
-        await sm.transition(order_id, OrderStatus.SUBMITTED)
+        await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING)
 
         rows = await started_db.express.list("audit_log")
         assert len(rows) >= 1
@@ -318,7 +325,7 @@ class TestOrderStateMachineTransition:
         sm = OrderStateMachine(started_db)
 
         with pytest.raises(ValueError, match="terminal state"):
-            await sm.transition(order_id, OrderStatus.SUBMITTED)
+            await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING)
 
     @pytest.mark.asyncio
     async def test_transition_without_db_raises_runtime_error(self):
@@ -326,19 +333,20 @@ class TestOrderStateMachineTransition:
 
         sm = OrderStateMachine(db=None)
         with pytest.raises(RuntimeError, match="DataFlow instance"):
-            await sm.transition("any-id", OrderStatus.SUBMITTED)
+            await sm.transition("any-id", OrderStatus.SUBMITTED_PENDING)
 
     @pytest.mark.asyncio
     async def test_full_lifecycle_pending_to_attributed(self, started_db):
-        """Walk the full happy-path lifecycle: pending -> submitted -> partial -> filled -> reconciled -> attributed."""
+        """Walk the full happy-path lifecycle: pending -> submitted_pending -> working -> partial_filled -> filled -> reconciled -> attributed."""
         from midas.execution.order_state import OrderStatus, OrderStateMachine
 
         order_id = await _create_test_order(started_db)
         sm = OrderStateMachine(started_db)
 
         for target in [
-            OrderStatus.SUBMITTED,
-            OrderStatus.PARTIAL,
+            OrderStatus.SUBMITTED_PENDING,
+            OrderStatus.WORKING,
+            OrderStatus.PARTIAL_FILLED,
             OrderStatus.FILLED,
             OrderStatus.RECONCILED,
             OrderStatus.ATTRIBUTED,
@@ -1002,7 +1010,7 @@ class TestEdgeCases:
 
         order_id = await _create_test_order(started_db)
         sm = OrderStateMachine(started_db)
-        await sm.transition(order_id, OrderStatus.SUBMITTED, details={"source": "test"})
+        await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING, details={"source": "test"})
 
         rows = await started_db.express.list("audit_log")
         assert len(rows) >= 1

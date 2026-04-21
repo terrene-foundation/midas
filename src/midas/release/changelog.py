@@ -9,8 +9,7 @@ Ref: rules/git.md (conventional commits)
 
 import re
 import subprocess
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from midas.release.version import get_version
 
@@ -19,6 +18,10 @@ _COMMIT_PATTERN = re.compile(
     r"(?:\((?P<scope>[^)]+)\))?"
     r":\s*(?P<description>.+)$"
 )
+
+# Strict allowlist for git refs: branch names, tags, commit hashes, HEAD, and
+# relative refs. Rejects any ref starting with '-' (prevents flag injection).
+_GIT_REF_REGEX = re.compile(r"^[a-zA-Z0-9_./^~:]+$")
 
 
 @dataclass
@@ -98,6 +101,9 @@ class ChangelogGenerator:
 
     def _parse_commits(self, from_ref: str, to_ref: str) -> list[ChangelogEntry]:
         """Parse git log into changelog entries."""
+        # Validate refs against allowlist to prevent flag injection
+        if not _GIT_REF_REGEX.match(from_ref) or not _GIT_REF_REGEX.match(to_ref):
+            return []
         try:
             result = subprocess.run(
                 ["git", "log", "--oneline", f"{from_ref}..{to_ref}"],

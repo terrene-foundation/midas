@@ -1,8 +1,14 @@
 """M08 Regime Rendering — continuous a_t attention score from z_t posterior."""
 
+from __future__ import annotations
+
 import enum
 from dataclasses import dataclass
-from typing import Any
+
+from midas.regime.learned_attention import (
+    AttentionWeightLearner,
+    LearnedAttentionModel,
+)
 
 
 class AttentionBand(enum.Enum):
@@ -26,15 +32,26 @@ class RegimeState:
 
 
 class RegimeRenderer:
-    """Compute continuous a_t from latent state components."""
+    """Compute continuous a_t from latent state components.
 
-    # Weights for a_t computation (6 contributors per specs/06 S2)
-    _W_VOL = 0.30
-    _W_OOD = 0.25
-    _W_TRANSITION = 0.15
-    _W_VARIANCE = 0.15
-    _W_DISAGREEMENT = 0.10
-    _W_DRAWDOWN_VELOCITY = 0.05
+    Supports both fixed prior weights (default) and learned weights via
+    an AttentionWeightLearner.  Per spec 06 S2, learned weights should
+    be trained on historical user-engagement outcomes.
+    """
+
+    # Prior-informed default weights (6 contributors per specs/06 S2).
+    _DEFAULT_WEIGHTS = [0.30, 0.25, 0.15, 0.15, 0.10, 0.05]
+
+    def __init__(self, weight_learner: AttentionWeightLearner | None = None) -> None:
+        self._weight_learner = weight_learner
+
+    def _get_weights(self) -> list[float]:
+        """Return learned weights if available, else prior defaults."""
+        if self._weight_learner is not None:
+            learned = self._weight_learner.get_weights()
+            if learned is not None:
+                return learned
+        return list(self._DEFAULT_WEIGHTS)
 
     def render(
         self,
@@ -66,13 +83,14 @@ class RegimeRenderer:
         else:
             var_signal = 0.5
 
+        w = self._get_weights()
         a_t = (
-            self._W_VOL * vol_pct
-            + self._W_OOD * ood
-            + self._W_TRANSITION * trans
-            + self._W_VARIANCE * var_signal
-            + self._W_DISAGREEMENT * disagreement
-            + self._W_DRAWDOWN_VELOCITY * dd_vel
+            w[0] * vol_pct
+            + w[1] * ood
+            + w[2] * trans
+            + w[3] * var_signal
+            + w[4] * disagreement
+            + w[5] * dd_vel
         )
         a_t = min(max(a_t, 0.0), 1.0)
 

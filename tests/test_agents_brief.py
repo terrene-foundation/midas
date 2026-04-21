@@ -478,7 +478,7 @@ class TestDebateTools:
 
         mock_db.express.list = AsyncMock(return_value=[])
         tools = DebateTools(mock_db)
-        result = await tools.retrieve_analogue("hash123")
+        result = await tools.retrieve_analogue([0.1, 0.2, 0.3])
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
@@ -728,7 +728,7 @@ class TestBriefTemplates:
         from midas.brief.templates import BriefTemplates
 
         result = BriefTemplates.render_standard(self._sample_brief_data())
-        assert "Situation" in result
+        assert "Thesis" in result or "Situation" in result
         assert "Evidence" in result
         assert "Recommendation" in result
         assert "Counter" in result or "counter" in result

@@ -6,12 +6,14 @@ for routine decisions to extreme-weight briefs with OOD warnings.
 """
 
 from midas.brief.composer import BriefComposer
+from midas.brief.contract import BriefContract
 from midas.brief.density_matrix import DensityMatrix
 from midas.brief.templates import BriefTemplates
 from midas.brief.top_of_fold import TopOfFoldCard
 
 __all__ = [
     "BriefComposer",
+    "BriefContract",
     "BriefTemplates",
     "DensityMatrix",
     "TopOfFoldCard",

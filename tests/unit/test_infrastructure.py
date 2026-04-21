@@ -986,12 +986,20 @@ class TestRiskMetrics:
         assert ir > 0
 
     def test_information_ratio_zero_tracking_error(self):
-        """Information ratio raises or returns inf when tracking error is 0."""
+        """Information ratio returns bounded sentinel (not inf/nan) when tracking error is 0.
+
+        Security fix: inf/nan flowing into compliance checks causes silent pass on
+        comparisons (NaN always returns False). Returns a large finite value instead.
+        """
         from midas.attribution.metrics import RiskMetrics
 
+        # Identical returns → zero tracking error → bounded sentinel returned
         r = np.array([0.01, 0.02])
         ir = RiskMetrics.information_ratio(r, r)
-        assert np.isinf(ir) or np.isnan(ir)
+        import math
+
+        assert math.isfinite(ir), f"Expected finite value, got {ir}"
+        assert ir > 1e9, f"Expected bounded sentinel (~1e10), got {ir}"
 
     def test_jensens_alpha_positive(self):
         """Jensen's alpha is positive for risk-adjusted outperformance."""

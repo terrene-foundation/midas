@@ -37,25 +37,25 @@ Dimensionality: 8–32 dimensions (hyperparameter, population-tuned).
 
 ## Module Surface (src/midas/)
 
-| Module             | Role                                                                                                         | Spec   |
-| ------------------ | ------------------------------------------------------------------------------------------------------------ | ------ |
-| `fabric/`          | Data fabric — ingestion, storage, adapters (IBKR, FRED, EODHD, alt-data)                                     | 03, 14 |
-| `ml/`              | Representation learners + state inference pools                                                              | 04, 05 |
-| `heads/`           | Decision heads (returns, vol, allocation, execution, cross-sectional)                                        | 04 §6  |
-| `router/`          | Meta-router — contextual blending, calibration, PBT harness, promotion                                       | 05     |
-| `state_inference/` | Bayesian filters, changepoint detection, OOD detection, posterior combination                                | 04 §5  |
-| `agents/`          | LLM agents — analyst (brief), debate (co-decision), orchestrator, research                                   | 07, 08 |
-| `attribution/`     | Brinson decomposition, NAV, counterfactual, track record scoring                                             | 12     |
-| `compliance/`      | Pre-trade compliance agent, escalation rules, envelope enforcement                                           | 11     |
-| `execution/`       | Order state machine, reconciliation, IBKR execution adapter                                                  | 13, 14 |
-| `autonomy/`        | Ladder (L0–L4), envelope, trust boundary, triggers                                                           | 08     |
-| `brief/`           | Composer, density matrix, templates, top-of-fold cards                                                       | 07, 09 |
-| `api/`             | FastAPI routes — health, pulse, decisions, debate, portfolio, backtest, signals, settings, compliance, audit | 09     |
-| `shadow/`          | Shadow lane — challenger models run in isolation, monitored for promotion                                    | 05 §5  |
-| `universe/`        | S&P 1500 universe management, changelog, filters                                                             | 03     |
-| `scheduler/`       | Background jobs (EOD ingestion, inference, calibration, rebalance check)                                     | 11 §7  |
-| `paper_trading/`   | Paper mode enforcement, 2-week minimum gate, validation reports                                              | FP-7   |
-| `evaluation/`      | Probes — calibration, OOD, stress testing                                                                    | 04 §11 |
+| Module             | Role                                                                                                                                                                               | Spec   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `fabric/`          | Data fabric — ingestion, storage, adapters (IBKR, FRED, EODHD, alt-data)                                                                                                           | 03, 14 |
+| `ml/`              | Representation learners + state inference pools                                                                                                                                    | 04, 05 |
+| `heads/`           | Decision heads (returns, vol, allocation, execution, cross-sectional)                                                                                                              | 04 §6  |
+| `router/`          | Meta-router — contextual blending, calibration, PBT harness, promotion                                                                                                             | 05     |
+| `state_inference/` | Bayesian filters, changepoint detection, OOD detection, posterior combination                                                                                                      | 04 §5  |
+| `agents/`          | LLM agents — analyst (brief), debate (co-decision), orchestrator, research                                                                                                         | 07, 08 |
+| `attribution/`     | Brinson decomposition, NAV, counterfactual, track record scoring                                                                                                                   | 12     |
+| `compliance/`      | Pre-trade compliance agent, escalation rules, envelope enforcement                                                                                                                 | 11     |
+| `execution/`       | Order state machine, reconciliation, IBKR execution adapter                                                                                                                        | 13, 14 |
+| `autonomy/`        | Ladder (L0–L4), envelope, trust boundary, triggers                                                                                                                                 | 08     |
+| `brief/`           | Composer, density matrix, templates, top-of-fold cards                                                                                                                             | 07, 09 |
+| `api/`             | FastAPI routes — health, pulse, decisions, debate, portfolio, backtest, signals, settings, compliance, audit. Rate-limited (60 req/min per-IP), JWT auth, IDOR-protected mutations | 09     |
+| `shadow/`          | Shadow lane — challenger models run in isolation, monitored for promotion                                                                                                          | 05 §5  |
+| `universe/`        | S&P 1500 universe management, changelog, filters                                                                                                                                   | 03     |
+| `scheduler/`       | Background jobs (EOD ingestion, inference, calibration, rebalance check)                                                                                                           | 11 §7  |
+| `paper_trading/`   | Paper mode enforcement, 2-week minimum gate, validation reports                                                                                                                    | FP-7   |
+| `evaluation/`      | Probes — calibration, OOD, stress testing                                                                                                                                          | 04 §11 |
 
 ---
 

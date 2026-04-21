@@ -519,7 +519,7 @@ class IBKRAdapter(BaseAdapter):
         mid = (bid + ask) / 2 if bid and ask else 0.0
         bid_size = float(data.get("bid_size", 0) or 0)
         ask_size = float(data.get("ask_size", 0) or 0)
-        spread_bps = ((ask - bid) / mid * 10000) if mid > 1e-10 else 0.0
+        spread_bps = ((ask - bid) / mid * 10000) if mid > 0.01 else 0.0
 
         result: dict[str, Any] = {
             "ticker": ticker,
@@ -944,6 +944,199 @@ class IBKRAdapter(BaseAdapter):
             "fetch_sweeps",
         )
         return data if isinstance(data, list) else data.get("sweeps", [])
+
+    # ------------------------------------------------------------------
+    # FX Sweep execution (spec S11)
+    # ------------------------------------------------------------------
+
+    async def execute_fx_sweep(
+        self,
+        from_currency: str,
+        to_currency: str,
+        amount: float,
+    ) -> dict[str, Any]:
+        """Execute an FX sweep between currencies in the account.
+
+        Submits a currency conversion via the IBKR Web API and records
+        the result in the ``fx_sweeps`` fabric table.
+
+        Ref: specs/14-ibkr-integration.md S11 -- FX, Currency Exposure, Sweep.
+
+        Parameters
+        ----------
+        from_currency:
+            Source currency code (e.g. ``"USD"``).
+        to_currency:
+            Target currency code (e.g. ``"SGD"``).
+        amount:
+            Amount to convert in the source currency.
+
+        Returns
+        -------
+        Dict with sweep details including ``sweep_id``, ``rate``, ``fee``,
+        ``from_currency``, ``to_currency``, ``amount``, ``timestamp``.
+        """
+        operation = "execute_fx_sweep"
+        self._log.info(
+            "execute_fx_sweep.start",
+            from_currency=from_currency,
+            to_currency=to_currency,
+            amount=amount,
+        )
+
+        if amount <= 0:
+            raise ValueError(f"FX sweep amount must be positive, got {amount}")
+        if not from_currency or not to_currency:
+            raise ValueError("Both from_currency and to_currency are required")
+        if from_currency == to_currency:
+            raise ValueError("from_currency and to_currency must differ")
+
+        try:
+            raw = await self._enqueue(
+                Priority.ORDER_SUBMIT,
+                operation,
+                self._do_execute_fx_sweep,
+                from_currency,
+                to_currency,
+                amount,
+            )
+        except IBKRFallbackError:
+            raise
+        except (AuthenticationError, AdapterError) as exc:
+            self._log.error(
+                "execute_fx_sweep.failed",
+                from_currency=from_currency,
+                to_currency=to_currency,
+                error=str(exc),
+            )
+            await self._write_audit(
+                operation=operation,
+                success=False,
+                detail=str(exc),
+            )
+            return {}
+
+        if not raw:
+            return {}
+
+        now = datetime.now(timezone.utc)
+        db = self._get_db()
+
+        row: dict[str, Any] = {
+            "from_currency": from_currency,
+            "to_currency": to_currency,
+            "amount": float(raw.get("amount", amount)),
+            "rate": float(raw.get("rate", 0) or 0),
+            "fee": float(raw.get("fee", 0) or 0),
+            "converted_amount": float(raw.get("converted_amount", 0) or 0),
+            "broker_sweep_id": raw.get("sweep_id", raw.get("order_id", "")),
+            "sweep_timestamp": raw.get("timestamp", now.isoformat()),
+            # PIT fields
+            "period_end": now.date().isoformat(),
+            "filed_at": now.isoformat(),
+            "restated_at": "",
+            "source_vintage": f"ibkr:fx_sweep:{now.isoformat()}",
+        }
+
+        try:
+            await db.express.create("fx_sweeps", row)
+        except Exception as exc:
+            self._log.warning(
+                "execute_fx_sweep.write_failed",
+                error=str(exc),
+            )
+
+        await self._write_audit(
+            operation=operation,
+            success=True,
+            detail=(
+                f"FX sweep: {amount} {from_currency}->{to_currency} "
+                f"@ rate={row['rate']}, fee={row['fee']}"
+            ),
+            rows_written=1,
+        )
+
+        self._log.info(
+            "execute_fx_sweep.complete",
+            from_currency=from_currency,
+            to_currency=to_currency,
+            amount=amount,
+            rate=row["rate"],
+        )
+        return row
+
+    async def _do_execute_fx_sweep(
+        self,
+        from_currency: str,
+        to_currency: str,
+        amount: float,
+    ) -> dict[str, Any]:
+        """Internal: submit FX conversion to IBKR."""
+        return await self._oauth_request(
+            IBKR_SWEEPS_URL,
+            {
+                "action": "SWEEP",
+                "from_currency": from_currency,
+                "to_currency": to_currency,
+                "amount": amount,
+            },
+            "execute_fx_sweep",
+        )
+
+    # ------------------------------------------------------------------
+    # FX Sweep history (spec S11)
+    # ------------------------------------------------------------------
+
+    async def get_sweep_history(self, account_id: str) -> list[dict[str, Any]]:
+        """Retrieve FX sweep history from the ``fx_sweeps`` fabric table.
+
+        Unlike ``fetch_sweep_events`` which pulls from the broker API,
+        this reads the local fabric table for Midas-initiated sweeps.
+
+        Ref: specs/14-ibkr-integration.md S11.
+
+        Parameters
+        ----------
+        account_id:
+            The IBKR account ID to look up sweep history for.
+
+        Returns
+        -------
+        List of sweep dicts from the ``fx_sweeps`` table.
+        """
+        operation = "get_sweep_history"
+        self._log.info("get_sweep_history.start", account_id=account_id)
+
+        db = self._get_db()
+
+        try:
+            rows = await db.express.list("fx_sweeps", filter={})
+        except Exception as exc:
+            self._log.error(
+                "get_sweep_history.failed",
+                account_id=account_id,
+                error=str(exc),
+            )
+            await self._write_audit(
+                operation=operation,
+                success=False,
+                detail=str(exc),
+            )
+            return []
+
+        await self._write_audit(
+            operation=operation,
+            success=True,
+            detail=f"retrieved {len(rows)} sweep records",
+            rows_written=0,
+        )
+
+        self._log.info(
+            "get_sweep_history.complete",
+            account_id=account_id,
+            sweeps_found=len(rows),
+        )
+        return rows
 
     # ------------------------------------------------------------------
     # Write a fills record (called by execution layer after a fill)

@@ -70,6 +70,12 @@ For each change, verify:
 8. **Credential safety** — no response bodies in error messages, no hardcoded secrets
 9. **Compliance in critical path** — no bypass of the pre-trade compliance agent
 10. **Attention budget** — brief density scales with dollars-at-stake
+11. **IDOR protection** — mutation endpoints verify JWT sub matches resource owner
+12. **Rate limiting** — all endpoints behind per-IP sliding-window (60 req/min)
+13. **DB access safety** — `_get_db()` raises 503, callers never check `if db is None`
+14. **Re-auth for sensitive ops** — approve/decline require short-lived reauth token
+15. **First-seven-days enforcement** — new live users capped at L1 for 7 days
+16. **Kill switch code persistence** — confirmation hash in audit_log, not instance vars
 
 ## Architecture Diagram
 

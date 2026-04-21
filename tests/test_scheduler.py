@@ -462,8 +462,8 @@ class TestJobFailureRecovery:
 
 class TestJobDefinitions:
     def test_job_definitions_count(self):
-        """There are exactly 13 canonical job definitions."""
-        assert len(JOB_DEFINITIONS) == 13
+        """There are exactly 14 canonical job definitions."""
+        assert len(JOB_DEFINITIONS) == 14
 
     def test_each_definition_has_required_fields(self):
         """Every job definition has job_id, cron_expr, and description."""
@@ -473,12 +473,12 @@ class TestJobDefinitions:
             assert "description" in defn, f"Missing description for {defn.get('job_id')}"
 
     def test_all_job_ids_unique(self):
-        """All 13 job_ids are distinct."""
+        """All 14 job_ids are distinct."""
         ids = [d["job_id"] for d in JOB_DEFINITIONS]
         assert len(ids) == len(set(ids))
 
     def test_expected_job_ids(self):
-        """The 13 expected job IDs are present."""
+        """The 14 expected job IDs are present."""
         expected = {
             "eod_ingestion",
             "fundamentals_refresh",
@@ -490,6 +490,7 @@ class TestJobDefinitions:
             "rebalance_check",
             "counterfactual_computation",
             "pbt_challenger",
+            "kill_switch_auto_trip",
             "health_check",
             "nav_valuation",
             "paper_trading_report",
@@ -499,10 +500,10 @@ class TestJobDefinitions:
 
 
 class TestScheduledJobs:
-    def test_get_all_jobs_returns_13(self, scheduled_jobs):
-        """get_all_jobs returns exactly 13 job entries."""
+    def test_get_all_jobs_returns_14(self, scheduled_jobs):
+        """get_all_jobs returns exactly 14 job entries."""
         jobs = scheduled_jobs.get_all_jobs()
-        assert len(jobs) == 13
+        assert len(jobs) == 14
 
     def test_each_job_has_handler(self, scheduled_jobs):
         """Every returned job has a callable handler."""
@@ -526,7 +527,7 @@ class TestScheduledJobs:
 
 
 class TestScheduledJobsSmokeTests:
-    """Each of the 13 jobs should execute and return a result dict."""
+    """Each of the 14 jobs should execute and return a result dict."""
 
     @pytest.mark.asyncio
     async def test_eod_ingestion(self, scheduled_jobs):
@@ -591,6 +592,12 @@ class TestScheduledJobsSmokeTests:
         assert result["job"] == "pbt_challenger"
 
     @pytest.mark.asyncio
+    async def test_kill_switch_auto_trip(self, scheduled_jobs):
+        result = await scheduled_jobs._kill_switch_auto_trip({})
+        assert result["success"] is True
+        assert result["job"] == "kill_switch_auto_trip"
+
+    @pytest.mark.asyncio
     async def test_health_check_returns_adapters_checked(self, scheduled_jobs):
         """health_check returns success with adapters_checked count (0 when no adapters)."""
         result = await scheduled_jobs.health_check({})
@@ -615,10 +622,10 @@ class TestScheduledJobsSmokeTests:
         assert result["job"] == "paper_trading_report"
 
     @pytest.mark.asyncio
-    async def test_all_13_handlers_via_get_all_jobs(self, scheduled_jobs):
+    async def test_all_14_handlers_via_get_all_jobs(self, scheduled_jobs):
         """Every handler from get_all_jobs executes and returns success."""
         jobs = scheduled_jobs.get_all_jobs()
-        assert len(jobs) == 13
+        assert len(jobs) == 14
 
         for job in jobs:
             result = await job["handler"]({})
