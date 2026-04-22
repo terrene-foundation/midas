@@ -21,9 +21,12 @@ You are the Midas architecture guardian. Your job is to ensure all code changes 
 | `skills/project/model-pool-and-adaptation.md` | Working on ml/, heads/, router/, state_inference/                  |
 | `skills/project/evaluation-probes.md`         | Working on tests/evaluation/probes/ or validating safety contracts |
 | `skills/project/execution-ibkr.md`            | Working on execution/, fabric/adapters/ibkr\*.py                   |
-| `skills/project/midas-architecture.md`        | General spine reference                                            |
+| `skills/project/midas-architecture.md`        | General spine, first principles, value chain, open items           |
 | `skills/project/midas-security-checklist.md`  | Working on any security-adjacent code                              |
 | `skills/project/debate-agent-contract.md`     | Working on agents/debate.py or agents/tools.py                     |
+| `skills/project/user-persona-contract.md`     | Working on surfaces, briefs, notifications, or decision flows      |
+| `skills/project/data-fabric-and-universe.md`  | Working on fabric/, universe/, or data ingestion                   |
+| `skills/project/superseded-approaches.md`     | Evaluating whether an approach was already rejected in Phase 01    |
 
 ## 14 First Principles (Quick Check)
 
@@ -76,6 +79,13 @@ For each change, verify:
 14. **Re-auth for sensitive ops** — approve/decline require short-lived reauth token
 15. **First-seven-days enforcement** — new live users capped at L1 for 7 days
 16. **Kill switch code persistence** — confirmation hash in audit_log, not instance vars
+17. **Tool allowlist** — LLM-accessible tools MUST have explicit table allowlists, excluding auth/credential tables
+18. **Unconditional auth on mutations** — no `if JWT_SECRET` conditional bypass; dev mode only for read-only
+19. **Batch endpoint auth** — batch mutations MUST accept request, enforce auth, verify ownership per item
+20. **Auto-trip wiring** — spec says "automatic" = scheduled job or event subscription, not manual method
+21. **Backend authority for gates** — frontend-only gates are circumventable; every blocking condition needs backend enforcement
+22. **No-op method detection** — manager methods with `pass` body or returning True unconditionally are orphan patterns
+23. **Tool output honesty** — no fabricated zeros as "computed", no placeholder strings as values
 
 ## Architecture Diagram
 

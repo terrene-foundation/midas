@@ -6,17 +6,25 @@ Skills for the Midas autonomous investment assistant — a latent-first, evidenc
 
 | Skill                                                        | Purpose                                                                                                                           |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| [midas-architecture.md](midas-architecture.md)               | Core spine: latent state z_t, representation learners, decision heads, rendering layer, module surface map                        |
+| [midas-architecture.md](midas-architecture.md)               | Core spine, 14 first principles, value chain, performance measurement, open items, architecture rules                             |
 | [model-pool-and-adaptation.md](model-pool-and-adaptation.md) | Three-loop adaptation (inner/outer/middle), champion/challenger infrastructure, promotion contract, no-free-lunch operationalized |
+| [data-fabric-and-universe.md](data-fabric-and-universe.md)   | Universe selection, 29-table fabric catalog, freshness rules, feature store, data source catalog                                  |
 | [superseded-approaches.md](superseded-approaches.md)         | Phase 01 techniques explicitly rejected (HMM, BL/HRP/RP as champions, factor-driven decisions) — do NOT re-propose                |
+
+## Product Contract
+
+| Skill                                                | Purpose                                                                                                              |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| [user-persona-contract.md](user-persona-contract.md) | Singapore investor persona, 6 non-delegable decisions, 4 failure modes, time budget contract, "what the user is not" |
 
 ## Safety, Quality & Evaluation
 
 | Skill                                                      | Purpose                                                                                                                   |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| [midas-security-checklist.md](midas-security-checklist.md) | Security patterns from red team rounds 1-7 (IDOR, rate limiting, re-auth, DB safety, kill switch persistence, NaN guards) |
+| [midas-security-checklist.md](midas-security-checklist.md) | Security patterns from red team rounds 1-12 (tool allowlists, conditional auth, batch endpoints, frontend mock detection) |
 | [debate-agent-contract.md](debate-agent-contract.md)       | Debate agent must mutate decisions (not narrate), non-sycophancy rules, tool suite, error handling                        |
 | [evaluation-probes.md](evaluation-probes.md)               | Evaluation probe suite — calibration, router overfitting, shadow lane isolation, track record gates, safety probes        |
+| [execution-ibkr.md](execution-ibkr.md)                     | IBKR execution adapter, order state machine, cost model, FX sweep, PLAF algorithms                                        |
 
 ## Key Principles (Quick Reference)
 
