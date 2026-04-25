@@ -2,6 +2,7 @@ import { Sidebar, ViewportGate } from "@/elements/Sidebar";
 import { DebateOverlay } from "@/elements/DebateOverlay";
 import { OODBanner } from "@/elements/safety/OODBanner";
 import { AttentionBudgetGauge } from "@/elements/attention/AttentionBudgetGauge";
+import { OnboardingGuard } from "@/elements/onboarding/OnboardingGuard";
 
 export default function ShellLayout({
   children,
@@ -19,7 +20,9 @@ export default function ShellLayout({
               <AttentionBudgetGauge />
             </div>
           </header>
-          <main className="flex-1 overflow-y-auto">{children}</main>
+          <main className="flex-1 overflow-y-auto">
+            <OnboardingGuard>{children}</OnboardingGuard>
+          </main>
         </div>
         <DebateOverlay />
       </div>

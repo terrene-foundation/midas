@@ -33,6 +33,7 @@ class OnboardingRouter:
 
     def __init__(self) -> None:
         self.router = APIRouter()
+        self.router.add_api_route("/status", self.get_status, methods=["GET"])
         self.router.add_api_route("/connect-brokerage", self.connect_brokerage, methods=["POST"])
         self.router.add_api_route("/risk-profile", self.set_risk_profile, methods=["POST"])
         self.router.add_api_route(
@@ -74,6 +75,27 @@ class OnboardingRouter:
                 "severity": "info",
             },
         )
+
+    async def get_status(self, request: Request) -> dict[str, Any]:
+        """Return onboarding progress so the frontend knows whether to redirect to /onboarding."""
+        logger.info("onboarding.status.start")
+        user_id = self._resolve_user(request, {})
+        db = await _get_db()
+        state = await self._get_state(db, user_id)
+        activated = bool(state.get("activated_at"))
+        step: str
+        if activated:
+            step = "done"
+        elif state.get("universe_set"):
+            step = "activate"
+        elif state.get("risk_profile_set"):
+            step = "universe"
+        elif state.get("brokerage_connected"):
+            step = "risk"
+        else:
+            step = "connect"
+        logger.info("onboarding.status.ok", extra={"user_id": user_id, "step": step})
+        return {"activated": activated, "step": step}
 
     async def connect_brokerage(self, request: Request, body: dict[str, Any]) -> dict[str, Any]:
         logger.info("onboarding.connect_brokerage.start")
@@ -1168,24 +1190,28 @@ class PaperLiveRouter:
 
             sections = []
             for subsystem in full_report.get("subsystems", []):
-                sections.append({
-                    "title": subsystem.get("subsystem", "Unknown"),
-                    "content": subsystem.get("detail", "No details available."),
-                    "status": subsystem.get("status", "unknown"),
-                })
+                sections.append(
+                    {
+                        "title": subsystem.get("subsystem", "Unknown"),
+                        "content": subsystem.get("detail", "No details available."),
+                        "status": subsystem.get("status", "unknown"),
+                    }
+                )
 
             perf = full_report.get("performance", {})
             if perf:
-                sections.append({
-                    "title": "Performance Summary",
-                    "content": (
-                        f"Total return: {perf.get('total_return', 'N/A')}. "
-                        f"Sharpe ratio: {perf.get('sharpe_ratio', 'N/A')}. "
-                        f"Max drawdown: {perf.get('max_drawdown', 'N/A')}. "
-                        f"Trades: {perf.get('trade_count', 'N/A')}."
-                    ),
-                    "status": "info",
-                })
+                sections.append(
+                    {
+                        "title": "Performance Summary",
+                        "content": (
+                            f"Total return: {perf.get('total_return', 'N/A')}. "
+                            f"Sharpe ratio: {perf.get('sharpe_ratio', 'N/A')}. "
+                            f"Max drawdown: {perf.get('max_drawdown', 'N/A')}. "
+                            f"Trades: {perf.get('trade_count', 'N/A')}."
+                        ),
+                        "status": "info",
+                    }
+                )
 
             return {
                 "overall_status": full_report.get("overall_status", "pending"),
