@@ -1233,6 +1233,151 @@ class PaperLiveRouter:
             }
 
 
+class MultiTurnDebateRouter:
+    """Multi-turn debate with live portfolio context injection.
+
+    Endpoints for creating stateful debate threads that inject live portfolio
+    positions, weights, regime state, and P&L before each LLM call.
+
+    Ref: specs/07 S3.5 (live portfolio context), S3.6 (stateful threads)
+    Ref: T-23-05
+    """
+
+    def __init__(self) -> None:
+        self.router = APIRouter()
+        self.router.add_api_route("/thread", self.create_thread, methods=["POST"])
+        self.router.add_api_route("/thread/{thread_id}", self.get_thread, methods=["GET"])
+        self.router.add_api_route("/thread/{thread_id}/turn", self.add_turn, methods=["POST"])
+        self.router.add_api_route(
+            "/thread/{thread_id}/context", self.get_thread_context, methods=["GET"]
+        )
+
+    async def _get_debate_agent(self):
+        """Build a DebateAgent with DebateTools wired in."""
+        from midas.agents.debate import DebateAgent
+        from midas.agents.provider import FrontierProvider
+        from midas.agents.tools import DebateTools
+
+        db = await _get_db()
+        if db is None:
+            return None, None
+        provider = FrontierProvider()
+        tools = DebateTools(db)
+        agent = DebateAgent(provider, tools=tools)
+        return agent, db
+
+    async def create_thread(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Create a new multi-turn debate thread with live portfolio context.
+
+        POST /debate/thread
+        Body: {decision_id: str, brief?: dict}
+        Returns: {thread_id, decision_id, status, turns, portfolio_context}
+        """
+        decision_id = body.get("decision_id", "")
+        brief = body.get("brief")
+
+        logger.info("debate.multiturn.create_thread", extra={"decision_id": decision_id})
+
+        result = await self._get_debate_agent()
+        if result[0] is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+
+        agent, db = result
+        thread = await agent.create_thread(db, decision_id=decision_id, brief=brief)
+
+        logger.info(
+            "debate.multiturn.thread_created",
+            extra={"thread_id": thread["thread_id"], "decision_id": decision_id},
+        )
+        return thread
+
+    async def get_thread(self, thread_id: str) -> dict[str, Any]:
+        """Retrieve a debate thread with all turns and portfolio context.
+
+        GET /debate/thread/{thread_id}
+        Returns: {thread_id, decision_id, status, turns, portfolio_context, created_at}
+        """
+        logger.info("debate.multiturn.get_thread", extra={"thread_id": thread_id})
+
+        result = await self._get_debate_agent()
+        if result[0] is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+
+        agent, db = result
+        thread = await agent.get_thread(db, thread_id)
+
+        if thread is None:
+            raise HTTPException(status_code=404, detail="Thread not found")
+
+        return thread
+
+    async def add_turn(self, thread_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Add a debate turn with live portfolio context injected.
+
+        POST /debate/thread/{thread_id}/turn
+        Body: {user_message: str, brief?: dict}
+        Returns: {thread_id, turn_number, response, turns, portfolio_context,
+                  provenance_pointers, status}
+        """
+        user_message = body.get("user_message", "")
+        brief = body.get("brief")
+
+        if not user_message:
+            raise HTTPException(status_code=422, detail="user_message is required")
+
+        logger.info(
+            "debate.multiturn.add_turn",
+            extra={"thread_id": thread_id, "message_len": len(user_message)},
+        )
+
+        result = await self._get_debate_agent()
+        if result[0] is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+
+        agent, db = result
+
+        try:
+            turn_result = await agent.add_turn(
+                db, thread_id, user_message=user_message, brief=brief
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+        logger.info(
+            "debate.multiturn.turn_added",
+            extra={
+                "thread_id": thread_id,
+                "turn_number": turn_result["turn_number"],
+                "status": turn_result["status"],
+            },
+        )
+        return turn_result
+
+    async def get_thread_context(self, thread_id: str) -> dict[str, Any]:
+        """Get the current portfolio context for a thread without adding a turn.
+
+        GET /debate/thread/{thread_id}/context
+        Returns: {thread_id, portfolio_context, status}
+        """
+        logger.info("debate.multiturn.get_context", extra={"thread_id": thread_id})
+
+        result = await self._get_debate_agent()
+        if result[0] is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+
+        agent, db = result
+        thread = await agent.get_thread(db, thread_id)
+
+        if thread is None:
+            raise HTTPException(status_code=404, detail="Thread not found")
+
+        return {
+            "thread_id": thread_id,
+            "portfolio_context": thread.get("portfolio_context", {}),
+            "status": thread.get("status", "open"),
+        }
+
+
 class PositionHistoryRouter:
     """Per-ticker position history with decision linkage.
 
@@ -1307,3 +1452,120 @@ class PositionHistoryRouter:
             "history": history,
             "linked_debate_threads": debate_threads,
         }
+
+
+class OrderStatusRouter:
+    """Order status, state machine, and transition history.
+
+    Provides read-only access to order records and their IBKR state machine
+    transitions. Supports filtering by ticker, account, and canonical state.
+
+    Ref: specs/14-ibkr-integration.md §6
+    Ref: T-23-14
+    """
+
+    def __init__(self) -> None:
+        self.router = APIRouter()
+        self.router.add_api_route("/", self.list_orders, methods=["GET"])
+        self.router.add_api_route("/{order_id}", self.get_order, methods=["GET"])
+        self.router.add_api_route(
+            "/{order_id}/transitions", self.get_order_transitions, methods=["GET"]
+        )
+
+    async def list_orders(
+        self,
+        request: Request,
+        ticker: str | None = None,
+        status: str | None = None,
+        account_id: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """List orders with optional filters.
+
+        GET /orders/?ticker=AAPL&status=working&account_id=UA123&limit=50
+        """
+        logger.info("orders.list.start", extra={"ticker": ticker, "status": status})
+
+        db = await _get_db()
+        filters: dict[str, Any] = {}
+        if ticker:
+            filters["ticker"] = ticker.upper()
+        if account_id:
+            filters["account_id"] = account_id
+
+        rows = await db.express.list("orders", filter=filters, limit=limit)
+
+        # Apply status filter post-fetch (canonical state is a computed enum field)
+        if status:
+            from midas.fabric.models import OrderState
+
+            state_filter = OrderState(status.lower())
+            rows = [r for r in rows if r.get("state") == state_filter.value]
+
+        logger.info("orders.list.ok", extra={"count": len(rows)})
+        return {"items": rows, "total": len(rows), "limit": limit}
+
+    async def get_order(
+        self,
+        request: Request,
+        order_id: str,
+    ) -> dict[str, Any]:
+        """Get a single order by broker_order_id with computed state flags.
+
+        GET /orders/{order_id}
+        """
+        logger.info("orders.get.start", extra={"order_id": order_id})
+
+        db = await _get_db()
+        rows = await db.express.list("orders", filter={"broker_order_id": order_id})
+
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+
+        order = rows[0]
+        from midas.fabric.models import OrderState
+
+        state_str = order.get("state", "rejected")
+        try:
+            state = OrderState(state_str)
+        except ValueError:
+            state = OrderState.REJECTED
+
+        return {
+            **order,
+            "is_terminal": state.is_terminal(),
+            "is_working": state.is_working(),
+        }
+
+    async def get_order_transitions(
+        self,
+        request: Request,
+        order_id: str,
+    ) -> dict[str, Any]:
+        """Get full state transition history for an order.
+
+        GET /orders/{order_id}/transitions
+        Returns transition records sorted by occurred_at ascending.
+        """
+        logger.info("orders.transitions.start", extra={"order_id": order_id})
+
+        db = await _get_db()
+
+        # Verify order exists
+        rows = await db.express.list("orders", filter={"broker_order_id": order_id})
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+
+        # Fetch transition audit log entries for this order
+        transitions = await db.express.list(
+            "audit_log",
+            filter={
+                "action": "order_state_transition",
+                "order_id": order_id,
+            },
+        )
+
+        # Sort by occurred_at ascending
+        transitions.sort(key=lambda r: r.get("occurred_at", ""))
+
+        return {"order_id": order_id, "transitions": transitions, "total": len(transitions)}

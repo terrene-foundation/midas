@@ -34,6 +34,7 @@ from midas.api.routes_extended import (
     BacktestDetailRouter,
     DebateResolutionRouter,
     DecisionModifyRouter,
+    MultiTurnDebateRouter,
     NotificationRouter,
     OnboardingRouter,
     PaperLiveRouter,
@@ -216,6 +217,9 @@ def create_app(
 
     debate_resolution = DebateResolutionRouter()
     app.include_router(debate_resolution.router, prefix="/api/v1/debate", tags=["debate"])
+
+    multi_turn_debate = MultiTurnDebateRouter()
+    app.include_router(multi_turn_debate.router, prefix="/api/v1/debate", tags=["debate"])
 
     notifications = NotificationRouter()
     app.include_router(

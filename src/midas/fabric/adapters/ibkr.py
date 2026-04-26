@@ -33,6 +33,7 @@ from midas.fabric.adapters.base import (
     BaseAdapter,
     RateLimitExceeded,
 )
+from midas.fabric.models import OrderState
 
 if TYPE_CHECKING:
     from dataflow import DataFlow
@@ -758,6 +759,9 @@ class IBKRAdapter(BaseAdapter):
     async def fetch_order_status(self, account_id: str) -> list[dict[str, Any]]:
         """Fetch active/recent orders for ``account_id`` and write to ``orders`` table.
 
+        Detects and logs state transitions for each order by comparing the
+        current IBKR status against the last known state stored in fabric.
+
         Ref: specs/14-ibkr-integration.md §6 — order state machine mapping.
         """
         operation = "fetch_order_status"
@@ -798,18 +802,58 @@ class IBKRAdapter(BaseAdapter):
             if not ticker:
                 ticker = item.get("conid", "")
 
+            broker_order_id = str(item.get("order_id", item.get("id", "")))
+            ibkr_status_str = item.get("status", "")
+            new_state = OrderState.from_ibkr(ibkr_status_str)
+
+            # Detect state transition by looking up the last known state in fabric
+            previous_state: OrderState | None = None
+            if broker_order_id and db is not None:
+                try:
+                    existing_orders = await db.express.list(
+                        "orders", filter={"broker_order_id": broker_order_id}
+                    )
+                    if existing_orders:
+                        prev_status_str = existing_orders[0].get("status", "")
+                        try:
+                            previous_state = OrderState(prev_status_str)
+                        except ValueError:
+                            previous_state = OrderState.from_ibkr(prev_status_str)
+                except Exception:
+                    pass  # Non-fatal: we'll log the transition without previous state
+
+            # Log state transition if state changed
+            if previous_state is not None and previous_state != new_state:
+                self._log_transition(
+                    order_id=broker_order_id,
+                    ticker=ticker,
+                    from_state=previous_state,
+                    to_state=new_state,
+                    ibkr_message=ibkr_status_str,
+                )
+            elif previous_state is None and new_state is not None:
+                # Initial submission transition
+                self._log.info(
+                    "order.state_transition",
+                    order_id=broker_order_id,
+                    ticker=ticker,
+                    from_state="initial",
+                    to_state=new_state.value,
+                    transition_event="initial_submission",
+                )
+
             row: dict[str, Any] = {
                 "ticker": ticker,
                 "side": item.get("side", item.get("action", "")),
                 "order_type": item.get("order_type", item.get("type", "")),
                 "quantity": float(item.get("quantity", 0) or 0),
                 "limit_price": float(item.get("limit_price", item.get("lmt_price", 0)) or 0),
-                "status": _map_ibkr_order_status(item.get("status", "")),
+                "status": new_state.value,
                 "filled_qty": float(item.get("filled_qty", item.get("filled", 0)) or 0),
                 "filled_price": float(item.get("filled_price", item.get("avg_fill_price", 0)) or 0),
                 "submitted_at": item.get("submitted_at", item.get("created_time", "")),
                 "filled_at": item.get("filled_at", item.get("fill_time", "")),
-                "broker_order_id": item.get("order_id", item.get("id", "")),
+                "broker_order_id": broker_order_id,
                 "parent_decision_id": item.get("parent_id", ""),
                 # PIT fields
                 "period_end": now.date().isoformat(),
@@ -825,7 +869,7 @@ class IBKRAdapter(BaseAdapter):
                 self._log.warning(
                     "fetch_order_status.row_write_failed",
                     ticker=ticker,
-                    order_id=row["broker_order_id"],
+                    order_id=broker_order_id,
                     error=str(exc),
                 )
 
@@ -852,6 +896,33 @@ class IBKRAdapter(BaseAdapter):
             "fetch_orders",
         )
         return data if isinstance(data, list) else data.get("orders", [])
+
+    def _log_transition(
+        self,
+        order_id: str,
+        ticker: str,
+        from_state: OrderState,
+        to_state: OrderState,
+        ibkr_message: str | None = None,
+    ) -> None:
+        """Log an order state transition.
+
+        Every state transition is logged at INFO level with the order ID,
+        ticker, from/to states, and whether the new state is terminal.
+
+        Ref: specs/14-ibkr-integration.md §6.
+        """
+        is_terminal = to_state.is_terminal()
+        self._log.info(
+            "order.state_transition",
+            order_id=order_id,
+            ticker=ticker,
+            from_state=from_state.value,
+            to_state=to_state.value,
+            terminal=is_terminal,
+            ibkr_message=ibkr_message,
+            transition_event="state_change",
+        )
 
     # ------------------------------------------------------------------
     # FX Sweep events
@@ -1536,7 +1607,12 @@ class TWSTFallbackAdapter(BaseAdapter):
     # ------------------------------------------------------------------
 
     async def fetch_order_status(self, account_id: str) -> list[dict[str, Any]]:
-        """Fetch open orders via TWS and write to ``orders`` table."""
+        """Fetch open orders via TWS and write to ``orders`` table.
+
+        Detects and logs state transitions for each order.
+
+        Ref: specs/14-ibkr-integration.md §6 — order state machine mapping.
+        """
         operation = "fetch_order_status"
         self._log.info("fetch_order_status.start", account_id=account_id)
 
@@ -1564,6 +1640,35 @@ class TWSTFallbackAdapter(BaseAdapter):
             contract = order.contract
             o = order.order
             ticker = contract.symbol if contract else ""
+            broker_order_id = str(o.orderId)
+            ibkr_status_str = str(o.status)
+            new_state = OrderState.from_ibkr(ibkr_status_str)
+
+            # Detect state transition by looking up the last known state in fabric
+            previous_state: OrderState | None = None
+            if broker_order_id and db is not None:
+                try:
+                    existing_orders = await db.express.list(
+                        "orders", filter={"broker_order_id": broker_order_id}
+                    )
+                    if existing_orders:
+                        prev_status_str = existing_orders[0].get("status", "")
+                        try:
+                            previous_state = OrderState(prev_status_str)
+                        except ValueError:
+                            previous_state = OrderState.from_ibkr(prev_status_str)
+                except Exception:
+                    pass
+
+            # Log state transition if state changed
+            if previous_state is not None and previous_state != new_state:
+                self._log_transition(
+                    order_id=broker_order_id,
+                    ticker=ticker,
+                    from_state=previous_state,
+                    to_state=new_state,
+                    ibkr_message=ibkr_status_str,
+                )
 
             row: dict[str, Any] = {
                 "ticker": ticker,
@@ -1571,12 +1676,12 @@ class TWSTFallbackAdapter(BaseAdapter):
                 "order_type": o.orderType,
                 "quantity": float(o.totalQuantity),
                 "limit_price": float(o.lmtPrice or 0),
-                "status": _map_ibkr_order_status(str(o.status)),
+                "status": new_state.value,
                 "filled_qty": float(o.filledQuantity),
                 "filled_price": float(o.avgFillPrice or 0),
                 "submitted_at": str(o.submitted),
                 "filled_at": str(o.filledTime or ""),
-                "broker_order_id": str(o.orderId),
+                "broker_order_id": broker_order_id,
                 "parent_decision_id": str(o.parentId),
                 "period_end": now.date().isoformat(),
                 "filed_at": now.isoformat(),
@@ -1591,7 +1696,7 @@ class TWSTFallbackAdapter(BaseAdapter):
                 self._log.warning(
                     "fetch_order_status.row_write_failed",
                     ticker=ticker,
-                    order_id=row["broker_order_id"],
+                    order_id=broker_order_id,
                     error=str(exc),
                 )
 
@@ -1609,6 +1714,31 @@ class TWSTFallbackAdapter(BaseAdapter):
             orders_written=len(created_rows),
         )
         return created_rows
+
+    def _log_transition(
+        self,
+        order_id: str,
+        ticker: str,
+        from_state: OrderState,
+        to_state: OrderState,
+        ibkr_message: str | None = None,
+    ) -> None:
+        """Log an order state transition (TWS variant).
+
+        Ref: specs/14-ibkr-integration.md §6.
+        """
+        is_terminal = to_state.is_terminal()
+        self._log.info(
+            "order.state_transition",
+            order_id=order_id,
+            ticker=ticker,
+            from_state=from_state.value,
+            to_state=to_state.value,
+            terminal=is_terminal,
+            ibkr_message=ibkr_message,
+            transition_event="state_change",
+            source="tws",
+        )
 
     # ------------------------------------------------------------------
     # FX Sweep events (TWS) — not natively available via ib_async,
@@ -1705,22 +1835,5 @@ class TWSTFallbackAdapter(BaseAdapter):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _map_ibkr_order_status(ibkr_status: str) -> str:
-    """Map IBKR order status string to Midas canonical status.
-
-    Ref: specs/14-ibkr-integration.md §6 — order state machine.
-    """
-    mapping = {
-        "pendingsubmit": "submitted_pending",
-        "pendingcancel": "cancel_pending",
-        "presubmitted": "submitted_waiting",
-        "submitted": "working",
-        "filled": "filled",
-        "cancelled": "cancelled",
-        "apicancelled": "cancelled_api",
-        "inactive": "inactive_flagged",
-        "partiallyfilled": "partial_filled",
-    }
-    return mapping.get(ibkr_status.lower(), ibkr_status)
+# _map_ibkr_order_status removed — use OrderState.from_ibkr() instead.
+# Ref: specs/14-ibkr-integration.md §6

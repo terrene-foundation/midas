@@ -310,9 +310,68 @@ class PositionRecord:
     as_of: datetime
 
 
+class OrderState(Enum):
+    """IBKR order states mapped to Midas canonical states.
+
+    Ref: specs/14-ibkr-integration.md §6 — order state machine.
+    """
+
+    SUBMITTED_PENDING = "submitted_pending"  # PendingSubmit — awaiting initial confirmation
+    CANCEL_PENDING = "cancel_pending"  # PendingCancel — cancellation in flight
+    SUBMITTED_WAITING = "submitted_waiting"  # PreSubmitted — broker-held, not yet active
+    WORKING = "working"  # Submitted — active, working the quote
+    PARTIAL_FILLED = "partial_filled"  # Filled (partial) — some quantity filled
+    FILLED = "filled"  # Filled (complete) — terminal
+    CANCELLED = "cancelled"  # Cancelled — terminal
+    CANCELLED_API = "cancelled_api"  # ApiCancelled — terminal, API-initiated
+    INACTIVE_FLAGGED = "inactive_flagged"  # Inactive — requires intervention
+    REJECTED = "rejected"  # Rejection taxonomy from IBKR
+
+    @classmethod
+    def terminal_states(cls) -> set["OrderState"]:
+        """Return the set of terminal states (no further transitions expected)."""
+        return {cls.FILLED, cls.CANCELLED, cls.CANCELLED_API}
+
+    @classmethod
+    def from_ibkr(cls, ibkr_status: str) -> "OrderState":
+        """Map IBKR status string to Midas OrderState.
+
+        Ref: specs/14-ibkr-integration.md §6 table.
+        """
+        mapping = {
+            "pendingsubmit": cls.SUBMITTED_PENDING,
+            "pendingcancel": cls.CANCEL_PENDING,
+            "presubmitted": cls.SUBMITTED_WAITING,
+            "submitted": cls.WORKING,
+            "filled": cls.FILLED,
+            "cancelled": cls.CANCELLED,
+            "apicancelled": cls.CANCELLED_API,
+            "inactive": cls.INACTIVE_FLAGGED,
+            "partiallyfilled": cls.PARTIAL_FILLED,
+        }
+        return mapping.get(ibkr_status.lower(), cls.REJECTED)
+
+    def is_terminal(self) -> bool:
+        """Return True if this state requires no further transitions."""
+        return self in self.terminal_states()
+
+    def is_working(self) -> bool:
+        """Return True if this state represents an active working order."""
+        return self in {
+            self.SUBMITTED_PENDING,
+            self.CANCEL_PENDING,
+            self.SUBMITTED_WAITING,
+            self.WORKING,
+            self.PARTIAL_FILLED,
+        }
+
+
 @dataclass(frozen=True)
 class OrderRecord:
-    """Order state machine history."""
+    """Order state machine history.
+
+    Ref: specs/14-ibkr-integration.md §6 — order state machine.
+    """
 
     order_id: str
     pit: PITKey
@@ -323,9 +382,29 @@ class OrderRecord:
     limit_price: float | None
     fill_price: float | None
     fill_quantity: float | None
-    status: str  # PENDING | WORKING | FILLED | PARTIAL | CANCELLED | REJECTED
+    status: OrderState
     submitted_at: datetime
     last_updated_at: datetime
+
+
+@dataclass(frozen=True)
+class OrderStateTransition:
+    """Immutable record of an order state transition.
+
+    Every order state change (including initial submission) is recorded as
+    one of these. Used for audit trail and state machine verification.
+
+    Ref: specs/14-ibkr-integration.md §6.
+    """
+
+    transition_id: str
+    order_id: str
+    pit: PITKey
+    from_state: OrderState | None  # None for initial submission
+    to_state: OrderState
+    transition_reason: str  # e.g. "ibkr_fill", "user_cancel", "risk_reject"
+    ibkr_message: str | None  # Raw IBKR message if available
+    occurred_at: datetime
 
 
 @dataclass(frozen=True)
