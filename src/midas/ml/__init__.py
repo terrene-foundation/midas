@@ -1,5 +1,7 @@
 """M03 ML Infrastructure — model registry, training pipeline, architectures."""
 
+from datetime import datetime, timezone
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +16,10 @@ from midas.ml.online_inference import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+class RegistryError(Exception):
+    """Typed error for model registry operations."""
 
 
 @dataclass
@@ -121,7 +127,7 @@ class ModelRegistry:
         """Promote a model version to champion.
 
         Demotes all existing champions for the family, then promotes
-        the specified model_version to champion.
+        the specified model_version to champion. Writes audit log entry.
         """
         try:
             # Demote all existing champions for this family using upsert
@@ -129,8 +135,9 @@ class ModelRegistry:
                 "model_registry",
                 filter={"model_family": model_family, "promotion_status": "champion"},
             )
+            previous_champion_version = None
             for row in champion_rows:
-                # Read full record and upsert with updated status
+                previous_champion_version = row.get("model_version")
                 await self._db.express.upsert(
                     "model_registry",
                     {
@@ -157,16 +164,10 @@ class ModelRegistry:
                 filter={"model_family": model_family, "model_version": model_version},
             )
             if not target_rows:
-                logger.warning(
-                    "registry.promote_target_not_found",
-                    family=model_family,
-                    version=model_version,
+                raise RegistryError(
+                    f"Cannot promote: model {model_family}/{model_version} not found"
                 )
-                return False
             target = target_rows[-1]
-            print(
-                f"DEBUG promote: promoting target id={target['id']} version={target['model_version']}"
-            )
             await self._db.express.upsert(
                 "model_registry",
                 {
@@ -187,47 +188,121 @@ class ModelRegistry:
                     "metrics_json": target.get("metrics_json", ""),
                 },
             )
+            await self._write_audit(
+                "model_promoted",
+                model_family,
+                model_version,
+                {
+                    "previous_champion": previous_champion_version,
+                    "new_champion": model_version,
+                },
+            )
             logger.info(
                 "registry.promoted",
                 family=model_family,
                 version=model_version,
+                previous_champion=previous_champion_version,
             )
             return True
+        except RegistryError:
+            raise
         except Exception as exc:
             logger.error("registry.promote_failed", family=model_family, error=str(exc))
             return False
 
     async def retire(self, model_family: str, model_version: str) -> bool:
-        """Retire a model version (mark as retired status)."""
+        """Retire a model version.
+
+        Marks the model as retired. If retiring the current champion,
+        auto-promotes the best challenger. Prevents retiring the last
+        active model in the family.
+        """
         try:
             rows = await self._db.express.list("model_registry")
-            candidates = [
-                r
-                for r in rows
-                if r["model_family"] == model_family and r["model_version"] == model_version
-            ]
+            family_rows = [r for r in rows if r["model_family"] == model_family]
+            candidates = [r for r in family_rows if r["model_version"] == model_version]
             if not candidates:
-                logger.warning(
-                    "registry.retire_not_found",
-                    family=model_family,
-                    version=model_version,
+                raise RegistryError(
+                    f"Cannot retire: model {model_family}/{model_version} not found"
                 )
-                return False
-            row = candidates[-1]
-            # NOTE: update() with id-based filter works correctly; update() with
-            # field-based filter has the same stale-data issue as upsert()
+            target = candidates[-1]
+
+            # Guard: cannot retire the last active model in the family
+            active_statuses = {"champion", "challenger", "shadow"}
+            active_in_family = [r for r in family_rows if r["promotion_status"] in active_statuses]
+            if len(active_in_family) <= 1 and target["promotion_status"] in active_statuses:
+                raise RegistryError(
+                    f"Cannot retire {model_version}: it is the last active model "
+                    f"in family {model_family}"
+                )
+
+            is_champion = target["promotion_status"] == "champion"
             await self._db.express.update(
-                "model_registry", row["id"], {"promotion_status": "retired"}
+                "model_registry", target["id"], {"promotion_status": "retired"}
+            )
+
+            # Auto re-promote best challenger when retiring a champion
+            promoted_successor = None
+            if is_champion:
+                challengers = [
+                    r
+                    for r in family_rows
+                    if r["promotion_status"] in ("challenger", "shadow")
+                    and r["model_version"] != model_version
+                ]
+                if challengers:
+                    best = max(challengers, key=lambda r: r["id"])
+                    await self.promote(model_family, best["model_version"])
+                    promoted_successor = best["model_version"]
+
+            await self._write_audit(
+                "model_retired",
+                model_family,
+                model_version,
+                {"was_champion": is_champion, "promoted_successor": promoted_successor},
             )
             logger.info(
                 "registry.retired",
                 family=model_family,
                 version=model_version,
+                was_champion=is_champion,
+                promoted_successor=promoted_successor,
             )
             return True
+        except RegistryError:
+            raise
         except Exception as exc:
             logger.error("registry.retire_failed", family=model_family, error=str(exc))
             return False
+
+    async def _write_audit(
+        self,
+        action: str,
+        model_family: str,
+        model_version: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Write a structured audit entry for a registry event."""
+        import json
+
+        try:
+            await self._db.express.create(
+                "audit_log",
+                {
+                    "action": action,
+                    "rule_name": f"model_{model_family}",
+                    "details": json.dumps(
+                        {
+                            "model_family": model_family,
+                            "model_version": model_version,
+                            **metadata,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                    ),
+                },
+            )
+        except Exception as exc:
+            logger.warning("registry.audit_write_failed", action=action, error=str(exc))
 
     async def get_lineage(self, model_family: str) -> list[dict[str, Any]]:
         try:
