@@ -1010,7 +1010,7 @@ class BacktestRouter:
             return {"run_id": "local", "status": "queued"}
 
     async def get_results(self, run_id: str) -> dict[str, Any]:
-        """Get backtest results."""
+        """Get backtest results with regime breakdown and consistency data."""
         logger.info("backtest.results.start", extra={"run_id": run_id})
         try:
             db = await _get_db()
@@ -1020,6 +1020,7 @@ class BacktestRouter:
                     "status": "pending",
                     "metrics": {},
                     "regime_breakdown": [],
+                    "sub_horizons": [],
                 }
             # Look up by integer id; if run_id is not a valid integer, use a default
             try:
@@ -1034,12 +1035,45 @@ class BacktestRouter:
                     "status": "pending",
                     "metrics": {},
                     "regime_breakdown": [],
+                    "sub_horizons": [],
                 }
+
+            # Compute regime breakdown and consistency via BacktestDetailRouter.
+            # Import here to avoid circular import at module level.
+            from midas.api.routes_extended import BacktestDetailRouter
+
+            detail_router = BacktestDetailRouter()
+            try:
+                regime_result = await detail_router.get_regime_breakdown(run_id)
+                regime_breakdown = regime_result.get("regimes", [])
+            except Exception:
+                regime_breakdown = []
+
+            try:
+                consistency_result = await detail_router.get_consistency(run_id)
+                monthly = consistency_result.get("monthly", {})
+                quarterly = consistency_result.get("quarterly", {})
+                sub_horizons = [
+                    {
+                        "label": "Monthly",
+                        "return": monthly.get("positive_fraction", 0.0) or None,
+                        "periods": monthly.get("total_periods", 0),
+                    },
+                    {
+                        "label": "Quarterly",
+                        "return": quarterly.get("positive_fraction", 0.0) or None,
+                        "periods": quarterly.get("total_periods", 0),
+                    },
+                ]
+            except Exception:
+                sub_horizons = []
+
             return {
                 "run_id": run_id,
                 "status": "completed" if row.get("rationale") else "pending",
                 "metrics": {},
-                "regime_breakdown": [],
+                "regime_breakdown": regime_breakdown,
+                "sub_horizons": sub_horizons,
             }
         except HTTPException:
             raise
@@ -1050,6 +1084,7 @@ class BacktestRouter:
                 "status": "pending",
                 "metrics": {},
                 "regime_breakdown": [],
+                "sub_horizons": [],
             }
 
     async def list_scenarios(self) -> dict[str, Any]:
@@ -1614,6 +1649,275 @@ class ComplianceRouter:
         except Exception as exc:
             logger.error("compliance.list_evaluations.failed", extra={"error": str(exc)})
             return {"evaluations": [], "total": 0}
+
+
+class BriefsRouter:
+    """Briefs surface - investment brief management with versioning.
+
+    Ref: Spec 02 § Brief management promised
+    """
+
+    def __init__(self) -> None:
+        self.router = APIRouter()
+        self.router.add_api_route("/", self.list_briefs, methods=["GET"])
+        self.router.add_api_route("/", self.create_brief, methods=["POST"])
+        self.router.add_api_route("/{brief_id}", self.get_brief, methods=["GET"])
+        self.router.add_api_route("/{brief_id}", self.update_brief, methods=["PUT"])
+        self.router.add_api_route("/{brief_id}/versions", self.get_brief_versions, methods=["GET"])
+        self.router.add_api_route(
+            "/{brief_id}/versions/{version}", self.get_specific_version, methods=["GET"]
+        )
+
+    async def list_briefs(
+        self,
+        limit: int = Query(50, description="Max results"),
+    ) -> dict[str, Any]:
+        """List all briefs with their latest version info."""
+        logger.info("briefs.list.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"briefs": [], "total": 0}
+            rows = await db.express.list("briefs")
+            # Sort by updated_at descending
+            sorted_rows = sorted(rows, key=lambda r: r.get("updated_at", ""), reverse=True)
+            briefs = []
+            for r in sorted_rows[:limit]:
+                briefs.append(
+                    {
+                        "id": str(r.get("id", "")),
+                        "title": r.get("title", ""),
+                        "hypothesis": r.get("hypothesis", ""),
+                        "version": r.get("version", 1),
+                        "status": r.get("status", "draft"),
+                        "created_at": r.get("created_at", ""),
+                        "updated_at": r.get("updated_at", ""),
+                    }
+                )
+            return {"briefs": briefs, "total": len(briefs)}
+        except Exception as exc:
+            logger.error("briefs.list.failed", extra={"error": str(exc)})
+            return {"briefs": [], "total": 0}
+
+    async def create_brief(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Create a new brief with initial version 1."""
+        logger.info("briefs.create.start")
+        try:
+            db = await _get_db()
+            if db is None:
+                raise HTTPException(status_code=503, detail="Database unavailable")
+
+            required = ["title"]
+            for field in required:
+                if not body.get(field):
+                    raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+
+            now = datetime.now(timezone.utc).isoformat()
+            row = await db.express.create(
+                "briefs",
+                {
+                    "title": body["title"],
+                    "hypothesis": body.get("hypothesis", ""),
+                    "constraints": body.get("constraints", ""),
+                    "regime_assumptions": body.get("regime_assumptions", ""),
+                    "metrics": body.get("metrics", ""),
+                    "status": body.get("status", "draft"),
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            logger.info("briefs.created", brief_id=str(row.get("id", "")))
+            return {
+                "id": str(row.get("id", "")),
+                "title": body["title"],
+                "hypothesis": body.get("hypothesis", ""),
+                "constraints": body.get("constraints", ""),
+                "regime_assumptions": body.get("regime_assumptions", ""),
+                "metrics": body.get("metrics", ""),
+                "status": body.get("status", "draft"),
+                "version": 1,
+                "created_at": now,
+                "updated_at": now,
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("briefs.create.failed", extra={"error": str(exc)})
+            raise HTTPException(status_code=500, detail="Failed to create brief")
+
+    async def get_brief(self, brief_id: str) -> dict[str, Any]:
+        """Get the latest version of a brief."""
+        logger.info("briefs.get.start", extra={"brief_id": brief_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                raise HTTPException(status_code=503, detail="Database unavailable")
+            row = await db.express.read("briefs", brief_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="Brief not found")
+            return {
+                "id": str(row.get("id", "")),
+                "title": row.get("title", ""),
+                "hypothesis": row.get("hypothesis", ""),
+                "constraints": row.get("constraints", ""),
+                "regime_assumptions": row.get("regime_assumptions", ""),
+                "metrics": row.get("metrics", ""),
+                "status": row.get("status", "draft"),
+                "version": row.get("version", 1),
+                "created_at": row.get("created_at", ""),
+                "updated_at": row.get("updated_at", ""),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("briefs.get.failed", extra={"brief_id": brief_id, "error": str(exc)})
+            raise HTTPException(status_code=500, detail="Failed to get brief")
+
+    async def update_brief(self, brief_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Update a brief - creates a new version, does not overwrite."""
+        logger.info("briefs.update.start", extra={"brief_id": brief_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                raise HTTPException(status_code=503, detail="Database unavailable")
+
+            row = await db.express.read("briefs", brief_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="Brief not found")
+
+            now = datetime.now(timezone.utc).isoformat()
+            current_version = int(row.get("version", 1))
+
+            # Save current version to brief_versions before updating
+            await db.express.create(
+                "brief_versions",
+                {
+                    "brief_id": int(brief_id),
+                    "version": current_version,
+                    "title": row.get("title", ""),
+                    "hypothesis": row.get("hypothesis", ""),
+                    "constraints": row.get("constraints", ""),
+                    "regime_assumptions": row.get("regime_assumptions", ""),
+                    "metrics": row.get("metrics", ""),
+                    "status": row.get("status", "draft"),
+                    "created_at": now,
+                },
+            )
+
+            # Update creates a new version
+            updates = {
+                "title": body.get("title", row.get("title", "")),
+                "hypothesis": body.get("hypothesis", row.get("hypothesis", "")),
+                "constraints": body.get("constraints", row.get("constraints", "")),
+                "regime_assumptions": body.get(
+                    "regime_assumptions", row.get("regime_assumptions", "")
+                ),
+                "metrics": body.get("metrics", row.get("metrics", "")),
+                "status": body.get("status", row.get("status", "draft")),
+                "version": current_version + 1,
+                "updated_at": now,
+            }
+
+            await db.express.update("briefs", brief_id, updates)
+            logger.info("briefs.updated", brief_id=brief_id, new_version=current_version + 1)
+
+            # Return the updated brief
+            updated = await db.express.read("briefs", brief_id)
+            return {
+                "id": str(updated.get("id", "")),
+                "title": updated.get("title", ""),
+                "hypothesis": updated.get("hypothesis", ""),
+                "constraints": updated.get("constraints", ""),
+                "regime_assumptions": updated.get("regime_assumptions", ""),
+                "metrics": updated.get("metrics", ""),
+                "status": updated.get("status", "draft"),
+                "version": updated.get("version", current_version + 1),
+                "created_at": updated.get("created_at", ""),
+                "updated_at": updated.get("updated_at", ""),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("briefs.update.failed", extra={"brief_id": brief_id, "error": str(exc)})
+            raise HTTPException(status_code=500, detail="Failed to update brief")
+
+    async def get_brief_versions(self, brief_id: str) -> dict[str, Any]:
+        """Get version history for a brief (stored in brief_versions table)."""
+        logger.info("briefs.versions.start", extra={"brief_id": brief_id})
+        try:
+            db = await _get_db()
+            if db is None:
+                return {"versions": [], "brief_id": brief_id}
+
+            # Get the brief to confirm it exists
+            brief = await db.express.read("briefs", brief_id)
+            if not brief:
+                raise HTTPException(status_code=404, detail="Brief not found")
+
+            # Get all versions for this brief
+            versions = await db.express.list(
+                "brief_versions",
+                filter={"brief_id": brief_id},
+            )
+            versions_sorted = sorted(versions, key=lambda v: v.get("version", 0), reverse=True)
+
+            return {
+                "brief_id": brief_id,
+                "versions": [
+                    {
+                        "version": v.get("version", 1),
+                        "title": v.get("title", ""),
+                        "hypothesis": v.get("hypothesis", ""),
+                        "constraints": v.get("constraints", ""),
+                        "regime_assumptions": v.get("regime_assumptions", ""),
+                        "metrics": v.get("metrics", ""),
+                        "status": v.get("status", "draft"),
+                        "created_at": v.get("created_at", ""),
+                    }
+                    for v in versions_sorted
+                ],
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("briefs.versions.failed", extra={"brief_id": brief_id, "error": str(exc)})
+            return {"brief_id": brief_id, "versions": []}
+
+    async def get_specific_version(self, brief_id: str, version: str) -> dict[str, Any]:
+        """Get a specific version of a brief."""
+        logger.info("briefs.version.get", extra={"brief_id": brief_id, "version": version})
+        try:
+            db = await _get_db()
+            if db is None:
+                raise HTTPException(status_code=503, detail="Database unavailable")
+
+            versions = await db.express.list(
+                "brief_versions",
+                filter={"brief_id": brief_id, "version": int(version)},
+            )
+            if not versions:
+                raise HTTPException(status_code=404, detail="Version not found")
+
+            v = versions[0]
+            return {
+                "version": v.get("version", 1),
+                "title": v.get("title", ""),
+                "hypothesis": v.get("hypothesis", ""),
+                "constraints": v.get("constraints", ""),
+                "regime_assumptions": v.get("regime_assumptions", ""),
+                "metrics": v.get("metrics", ""),
+                "status": v.get("status", "draft"),
+                "created_at": v.get("created_at", ""),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(
+                "briefs.version.get.failed",
+                extra={"brief_id": brief_id, "version": version, "error": str(exc)},
+            )
+            raise HTTPException(status_code=500, detail="Failed to get brief version")
 
 
 class AuditRouter:

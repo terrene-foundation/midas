@@ -3,8 +3,8 @@
 import { useState } from "react";
 import {
   useDebateThreads,
-  useDebateThread,
-  useAddMessage,
+  useMultiTurnThread,
+  useAddDebateTurn,
 } from "@/lib/queries/useDebate";
 import { Skeleton } from "@/elements/LoadingSkeleton";
 
@@ -12,15 +12,15 @@ export default function DebatePage() {
   const [selectedThread, setSelectedThread] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const { data: threadsData, isPending: threadsLoading } = useDebateThreads();
-  const { data: threadData, isPending: threadLoading } = useDebateThread(
+  const { data: threadData, isPending: threadLoading } = useMultiTurnThread(
     selectedThread ?? "",
   );
-  const addMessage = useAddMessage();
+  const addTurn = useAddDebateTurn();
 
   const handleSend = () => {
     if (!selectedThread || !message.trim()) return;
-    addMessage.mutate(
-      { threadId: selectedThread, content: message.trim() },
+    addTurn.mutate(
+      { threadId: selectedThread, userMessage: message.trim() },
       { onSuccess: () => setMessage("") },
     );
   };
@@ -66,20 +66,19 @@ export default function DebatePage() {
           ) : selectedThread && threadData ? (
             <div className="rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-surface)] flex flex-col h-[calc(100vh-200px)]">
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {(threadData.messages ?? []).map((m, i) => (
-                  <div
-                    key={m.id ?? `msg-${i}`}
-                    className={`rounded-[var(--radius)] p-3 text-sm ${
-                      ("role" in m && m.role === "user") ||
-                      m.severity === "user"
-                        ? "bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                        : "bg-[var(--bg-hover)] text-[var(--text-secondary)]"
-                    }`}
-                  >
-                    {m.content}
+                {(threadData.turns ?? []).map((turn, i) => (
+                  <div key={turn.timestamp ?? `turn-${i}`}>
+                    <div className="rounded-[var(--radius)] p-3 text-sm bg-[var(--bg-elevated)] text-[var(--text-primary)]">
+                      {turn.user_message}
+                    </div>
+                    <div className="rounded-[var(--radius)] p-3 text-sm bg-[var(--bg-hover)] text-[var(--text-secondary)] mt-2">
+                      {turn.response?.raw_content_preview ??
+                        turn.response?.recommendation ??
+                        ""}
+                    </div>
                   </div>
                 ))}
-                {threadData.messages?.length === 0 && (
+                {threadData.turns?.length === 0 && (
                   <p className="text-sm text-[var(--text-muted)] text-center py-8">
                     No messages yet. Start the debate below.
                   </p>
@@ -95,7 +94,7 @@ export default function DebatePage() {
                 />
                 <button
                   onClick={handleSend}
-                  disabled={!message.trim() || addMessage.isPending}
+                  disabled={!message.trim() || addTurn.isPending}
                   className="px-4 py-2 rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-base)] text-sm font-medium disabled:opacity-50"
                 >
                   Send

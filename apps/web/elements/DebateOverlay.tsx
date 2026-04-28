@@ -1,26 +1,48 @@
 "use client";
 
+import { useEffect } from "react";
 import { useDebateOverlayStore } from "@/stores/debate-overlay-store";
-import { useDebateThread, useAddMessage } from "@/lib/queries/useDebate";
+import {
+  useMultiTurnThread,
+  useAddDebateTurn,
+  useCreateMultiTurnThread,
+} from "@/lib/queries/useDebate";
 import { useState } from "react";
 
 export function DebateOverlay() {
-  const { isOpen, context, closeDebate } = useDebateOverlayStore();
+  const { isOpen, context, threadId, setThreadId, closeDebate } =
+    useDebateOverlayStore();
   const [message, setMessage] = useState("");
 
-  const threadId = context?.id ?? "";
-  const { data: threadData } = useDebateThread(isOpen ? threadId : "");
-  const addMessage = useAddMessage();
+  const createThread = useCreateMultiTurnThread();
+  const { data: threadData } = useMultiTurnThread(threadId ?? "");
+  const addTurn = useAddDebateTurn();
 
-  if (!isOpen) return null;
+  // When a new debate context is opened (no threadId yet), create a thread
+  useEffect(() => {
+    if (isOpen && context && !threadId && !createThread.isPending) {
+      createThread.mutate(
+        { decisionId: context.id },
+        {
+          onSuccess: (data) => {
+            setThreadId(data.thread_id);
+          },
+        },
+      );
+    }
+  }, [isOpen, context, threadId, createThread, setThreadId]);
 
   const handleSend = () => {
     if (!threadId || !message.trim()) return;
-    addMessage.mutate(
-      { threadId, content: message.trim() },
+    addTurn.mutate(
+      { threadId, userMessage: message.trim() },
       { onSuccess: () => setMessage("") },
     );
   };
+
+  if (!isOpen) return null;
+
+  const messages = threadData?.turns ?? [];
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
@@ -40,19 +62,21 @@ export function DebateOverlay() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {(threadData?.messages ?? []).map((m, i) => (
-            <div
-              key={m.id ?? `msg-${i}`}
-              className={`rounded-[var(--radius)] p-3 text-sm ${
-                ("role" in m && m.role === "user") || m.severity === "user"
-                  ? "bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                  : "bg-[var(--bg-hover)] text-[var(--text-secondary)]"
-              }`}
-            >
-              {m.content}
+          {messages.map((turn, i) => (
+            <div key={turn.timestamp ?? `turn-${i}`}>
+              {/* User message */}
+              <div className="rounded-[var(--radius)] p-3 text-sm bg-[var(--bg-elevated)] text-[var(--text-primary)] mb-2">
+                {turn.user_message}
+              </div>
+              {/* Agent response */}
+              <div className="rounded-[var(--radius)] p-3 text-sm bg-[var(--bg-hover)] text-[var(--text-secondary)]">
+                {turn.response?.raw_content_preview ??
+                  turn.response?.recommendation ??
+                  ""}
+              </div>
             </div>
           ))}
-          {!threadData?.messages?.length && (
+          {!messages.length && (
             <p className="text-sm text-[var(--text-muted)] text-center py-8">
               No messages yet
             </p>
@@ -66,12 +90,13 @@ export function DebateOverlay() {
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
             placeholder="Type your argument..."
             aria-label="Debate message input"
-            className="flex-1 rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-gold)]"
+            disabled={!threadId || addTurn.isPending}
+            className="flex-1 rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-gold)] disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <button
             onClick={handleSend}
-            disabled={!message.trim() || addMessage.isPending}
-            className="px-4 py-2 rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-base)] text-sm font-medium disabled:opacity-50"
+            disabled={!threadId || !message.trim() || addTurn.isPending}
+            className="px-4 py-2 rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-base)] text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Send
           </button>

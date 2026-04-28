@@ -791,6 +791,45 @@ class TestBacktestEndpoint:
         assert "metrics" in data
         assert "regime_breakdown" in data
 
+    def test_get_results_includes_sub_horizons(self, client):
+        resp = client.get("/api/v1/backtest/results/bt-001")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "sub_horizons" in data
+        assert isinstance(data["sub_horizons"], list)
+
+    def test_get_results_regime_breakdown_structure(self, client):
+        resp = client.get("/api/v1/backtest/results/bt-001")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data["regime_breakdown"], list)
+
+    def test_regime_breakdown_endpoint_returns_200(self, client):
+        # Uses numeric run_id=1 matching seeded shadow_decisions id
+        resp = client.get("/api/v1/backtest/1/regime-breakdown")
+        assert resp.status_code == 200
+
+    def test_regime_breakdown_endpoint_returns_regimes(self, client):
+        resp = client.get("/api/v1/backtest/1/regime-breakdown")
+        data = resp.json()
+        assert "regimes" in data
+        assert isinstance(data["regimes"], list)
+        assert len(data["regimes"]) == 4
+        names = {r["name"] for r in data["regimes"]}
+        assert names <= {"calm", "elevated", "urgent", "crisis"}
+
+    def test_consistency_endpoint_returns_200(self, client):
+        resp = client.get("/api/v1/backtest/1/consistency")
+        assert resp.status_code == 200
+
+    def test_consistency_endpoint_returns_monthly_quarterly(self, client):
+        resp = client.get("/api/v1/backtest/1/consistency")
+        data = resp.json()
+        assert "monthly" in data
+        assert "quarterly" in data
+        assert "positive_fraction" in data["monthly"]
+        assert "positive_fraction" in data["quarterly"]
+
     def test_list_scenarios_returns_200(self, client):
         resp = client.get("/api/v1/backtest/scenarios")
         assert resp.status_code == 200

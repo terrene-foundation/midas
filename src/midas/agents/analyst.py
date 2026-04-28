@@ -49,18 +49,42 @@ class AnalystAgent:
         ----------
         decision_context:
             Dict with decision_type, instruments, evidence, and optional
-            regime/market metadata.
+            regime/market metadata. May include:
+            - _grounding: dict with positions_text, risk_text, analogues_text
+            - _validation_feedback: list[str] of validation errors to address
 
         Returns
         -------
         dict
             Keys: 'sections', 'confidence', 'model_version'.
         """
+        grounding = decision_context.get("_grounding")
+        validation_feedback = decision_context.get("_validation_feedback")
+
+        grounding_blocks = ""
+        if grounding:
+            if grounding.get("positions_text"):
+                grounding_blocks += f"\n{grounding['positions_text']}\n"
+            if grounding.get("risk_text"):
+                grounding_blocks += f"\n{grounding['risk_text']}\n"
+            if grounding.get("analogues_text"):
+                grounding_blocks += f"\n{grounding['analogues_text']}\n"
+
+        feedback_block = ""
+        if validation_feedback:
+            feedback_block = (
+                "\n\nPREVIOUS BRIEF VALIDATION ERRORS (fix these):\n"
+                + "\n".join(f"  - {e}" for e in validation_feedback)
+                + "\n"
+            )
+
         user_message = (
             f"Decision type: {decision_context.get('decision_type', 'unknown')}\n"
             f"Instruments: {json.dumps(decision_context.get('instruments', []))}\n"
             f"Evidence: {json.dumps(decision_context.get('evidence', []))}\n"
             f"Market context: {json.dumps(decision_context.get('market_context', {}))}\n"
+            f"{grounding_blocks}"
+            f"{feedback_block}"
             f"Produce a structured investment brief in JSON format."
         )
 

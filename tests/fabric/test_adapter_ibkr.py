@@ -6,7 +6,7 @@ Covers:
   fetch_order_status and order status mapping, fetch_sweep_events,
   write_fill, error handling
 - TWSTFallbackAdapter: initialization, health_check when ib_async not installed
-- _map_ibkr_order_status helper function
+- OrderState.from_ibkr() status mapping
 - Priority enum values
 
 Mocking strategy:
@@ -32,11 +32,11 @@ from midas.fabric.adapters.ibkr import (
     IBKR_API_BASE,
     IBKRFallbackError,
     IBKRAdapter,
+    OrderState,
     Priority,
     TWS_DEFAULT_PORT,
     TWS_PAPER_PORT,
     TWSTFallbackAdapter,
-    _map_ibkr_order_status,
 )
 from midas.fabric.engine import create_fabric, reset_fabric
 
@@ -173,55 +173,55 @@ class TestPriorityEnum:
 
 
 # ---------------------------------------------------------------------------
-# _map_ibkr_order_status helper tests
+# OrderState.from_ibkr() status mapping tests
 # ---------------------------------------------------------------------------
 
 
-class TestMapIBKROrderStatus:
-    """Tests for the _map_ibkr_order_status helper function."""
+class TestOrderStateFromIBKR:
+    """Tests for OrderState.from_ibkr() classmethod."""
 
     def test_maps_pending_submit(self):
-        assert _map_ibkr_order_status("PendingSubmit") == "submitted_pending"
+        assert OrderState.from_ibkr("PendingSubmit") == OrderState.SUBMITTED_PENDING
 
     def test_maps_pending_cancel(self):
-        assert _map_ibkr_order_status("PendingCancel") == "cancel_pending"
+        assert OrderState.from_ibkr("PendingCancel") == OrderState.CANCEL_PENDING
 
     def test_maps_pre_submitted(self):
-        assert _map_ibkr_order_status("PreSubmitted") == "submitted_waiting"
+        assert OrderState.from_ibkr("PreSubmitted") == OrderState.SUBMITTED_WAITING
 
     def test_maps_submitted(self):
-        assert _map_ibkr_order_status("Submitted") == "working"
+        assert OrderState.from_ibkr("Submitted") == OrderState.WORKING
 
     def test_maps_filled(self):
-        assert _map_ibkr_order_status("Filled") == "filled"
+        assert OrderState.from_ibkr("Filled") == OrderState.FILLED
 
     def test_maps_cancelled(self):
-        assert _map_ibkr_order_status("Cancelled") == "cancelled"
+        assert OrderState.from_ibkr("Cancelled") == OrderState.CANCELLED
 
     def test_maps_api_cancelled(self):
-        assert _map_ibkr_order_status("ApiCancelled") == "cancelled_api"
+        assert OrderState.from_ibkr("ApiCancelled") == OrderState.CANCELLED_API
 
     def test_maps_inactive(self):
-        assert _map_ibkr_order_status("Inactive") == "inactive_flagged"
+        assert OrderState.from_ibkr("Inactive") == OrderState.INACTIVE_FLAGGED
 
     def test_maps_partially_filled(self):
-        assert _map_ibkr_order_status("PartiallyFilled") == "partial_filled"
+        assert OrderState.from_ibkr("PartiallyFilled") == OrderState.PARTIAL_FILLED
 
     def test_case_insensitive_mapping(self):
         """Mapping works regardless of input case."""
-        assert _map_ibkr_order_status("filled") == "filled"
-        assert _map_ibkr_order_status("FILLED") == "filled"
-        assert _map_ibkr_order_status("Filled") == "filled"
+        assert OrderState.from_ibkr("filled") == OrderState.FILLED
+        assert OrderState.from_ibkr("FILLED") == OrderState.FILLED
+        assert OrderState.from_ibkr("Filled") == OrderState.FILLED
 
-    def test_unknown_status_returns_lowered_original(self):
-        """Unknown statuses are returned unchanged (the function lowers for lookup but returns original on miss)."""
-        result = _map_ibkr_order_status("SomeNewStatus")
-        # The function lowers for dict lookup, but returns the original arg on miss
-        assert result == "SomeNewStatus"
+    def test_unknown_status_returns_rejected(self):
+        """Unknown statuses map to REJECTED."""
+        result = OrderState.from_ibkr("SomeNewStatus")
+        assert result == OrderState.REJECTED
 
-    def test_empty_string_returns_empty(self):
-        """Empty string maps to empty string."""
-        assert _map_ibkr_order_status("") == ""
+    def test_empty_string_returns_rejected(self):
+        """Empty string maps to REJECTED."""
+        result = OrderState.from_ibkr("")
+        assert result == OrderState.REJECTED
 
     def test_all_defined_statuses_have_mapping(self):
         """Every known IBKR status maps to a Midas canonical status."""
@@ -237,8 +237,10 @@ class TestMapIBKROrderStatus:
             "PartiallyFilled",
         ]
         for status in known_ibkr_statuses:
-            mapped = _map_ibkr_order_status(status)
-            assert mapped != "", f"Status '{status}' should have a mapping"
+            mapped = OrderState.from_ibkr(status)
+            assert (
+                mapped != OrderState.REJECTED
+            ), f"Status '{status}' should have a non-REJECTED mapping"
 
 
 # ---------------------------------------------------------------------------

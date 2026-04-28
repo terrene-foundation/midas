@@ -662,6 +662,26 @@ class FabricReader(ABC):
         """Read model registry entry using the vintage active as of as_of_date."""
         ...
 
+    @abstractmethod
+    async def read_positions(
+        self,
+        instrument: str,
+        as_of: date,
+    ) -> list[PositionRecord]:
+        """Read current portfolio positions for an instrument."""
+        ...
+
+    @abstractmethod
+    async def read_decisions(
+        self,
+        instrument: str,
+        as_of: date,
+        lookback_days: int = 730,
+        limit: int = 5,
+    ) -> list[DecisionRecord]:
+        """Read historical decision records for an instrument within a lookback window."""
+        ...
+
 
 class FabricWriter(ABC):
     """Abstract writer for fabric records."""

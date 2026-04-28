@@ -14,11 +14,13 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  FileText,
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/pulse", label: "Pulse", icon: Activity },
   { href: "/decisions", label: "Decisions", icon: CheckSquare },
+  { href: "/briefs", label: "Briefs", icon: FileText },
   { href: "/debate", label: "Debate", icon: MessageSquare },
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
   { href: "/backtest", label: "Backtest", icon: BarChart3 },

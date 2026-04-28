@@ -195,7 +195,7 @@ class TestModelRegistryWriteAndRead:
         )
 
     def test_get_champion_returns_champion(self, registry):
-        """get_champion() returns the champion model."""
+        """get_champion(model_family) returns the champion model for that family."""
         import asyncio
 
         loop = asyncio.new_event_loop()
@@ -214,15 +214,17 @@ class TestModelRegistryWriteAndRead:
                 )
                 loop.run_until_complete(registry.register(mv))
 
-            champion = loop.run_until_complete(registry.get_champion("masked_autoencoder"))
+            # get_champion looks up by model_family, not model_type
+            champion = loop.run_until_complete(registry.get_champion("mae_v1"))
         finally:
             loop.close()
 
         assert champion is not None
         assert champion["promotion_status"] == "champion"
+        assert champion["model_family"] == "mae_v1"
 
     def test_get_challengers_returns_shadow_models(self, registry):
-        """get_challengers() returns shadow models in the pool."""
+        """get_challengers(model_family) returns shadow models for that family."""
         import asyncio
 
         loop = asyncio.new_event_loop()
@@ -241,14 +243,14 @@ class TestModelRegistryWriteAndRead:
                 )
                 loop.run_until_complete(registry.register(mv))
 
-            challengers = loop.run_until_complete(
-                registry.get_challengers("variational_autoencoder")
-            )
+            # get_challengers uses model_family, not model_type
+            challengers = loop.run_until_complete(registry.get_challengers("vae_v1"))
         finally:
             loop.close()
 
         assert len(challengers) == 2
         assert all(r["promotion_status"] == "shadow" for r in challengers)
+        assert all(r["model_family"] == "vae_v1" for r in challengers)
 
     def test_retire_returns_true_for_existing(self, registry):
         """retire() returns True for an existing model."""
@@ -315,33 +317,49 @@ class TestModelVersionInvariants:
         assert mv.promotion_status == "shadow"
         assert mv.metrics_json == '{"val_loss": 0.01}'
 
-    def test_promote_demotes_existing_champion(self, registry):
+    @pytest.mark.asyncio
+    async def test_promote_demotes_existing_champion(self, started_db):
         """promote() demotes the existing champion and promotes new version."""
-        import asyncio
+        registry = ModelRegistry(started_db)
 
-        loop = asyncio.new_event_loop()
-        try:
-            # Register current champion
-            champion = ModelVersion(
-                model_family="ssm_v1",
-                model_version="v1.0.0",
-                model_type="deep_ssm",
-                training_window_start="2024-01-01",
-                training_window_end="2024-12-31",
-                promotion_status="champion",
-                sample_count=10000,
-                parameter_count=800_000,
-                trained_at="2025-01-15T10:00:00",
-            )
-            loop.run_until_complete(registry.register(champion))
+        # Register current champion
+        champion = ModelVersion(
+            model_family="ssm_v1",
+            model_version="v1.0.0",
+            model_type="deep_ssm",
+            training_window_start="2024-01-01",
+            training_window_end="2024-12-31",
+            promotion_status="champion",
+            sample_count=10000,
+            parameter_count=800_000,
+            trained_at="2025-01-15T10:00:00",
+        )
+        await registry.register(champion)
 
-            # Verify champion exists
-            champ_before = loop.run_until_complete(registry.get_champion("deep_ssm"))
-            assert champ_before is not None
-            assert champ_before["model_version"] == "v1.0.0"
+        # Register new version as shadow
+        new_version = ModelVersion(
+            model_family="ssm_v1",
+            model_version="v2.0.0",
+            model_type="deep_ssm",
+            training_window_start="2024-01-01",
+            training_window_end="2024-12-31",
+            promotion_status="shadow",
+            sample_count=15000,
+            parameter_count=900_000,
+            trained_at="2025-02-01T10:00:00",
+        )
+        await registry.register(new_version)
 
-            # Promote new version
-            success = loop.run_until_complete(registry.promote("ssm_v1", "v2.0.0"))
-            assert success is True
-        finally:
-            loop.close()
+        # Verify champion exists (get_champion uses model_family)
+        champ_before = await registry.get_champion("ssm_v1")
+        assert champ_before is not None
+        assert champ_before["model_version"] == "v1.0.0"
+
+        # Promote new version
+        success = await registry.promote("ssm_v1", "v2.0.0")
+        assert success is True
+
+        # Verify new champion
+        champ_after = await registry.get_champion("ssm_v1")
+        assert champ_after["model_version"] == "v2.0.0"
+        assert champ_after["promotion_status"] == "champion"

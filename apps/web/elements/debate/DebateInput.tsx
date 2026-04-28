@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAddMessage } from "@/lib/queries/useDebate";
+import { useAddDebateTurn } from "@/lib/queries/useDebate";
 import { cn } from "@/elements/ui/utils";
 
 interface DebateInputProps {
@@ -11,12 +11,12 @@ interface DebateInputProps {
 
 export function DebateInput({ threadId, disabled }: DebateInputProps) {
   const [message, setMessage] = useState("");
-  const addMessage = useAddMessage();
+  const addTurn = useAddDebateTurn();
 
   const handleSend = () => {
     if (!message.trim()) return;
-    addMessage.mutate(
-      { threadId, content: message.trim() },
+    addTurn.mutate(
+      { threadId, userMessage: message.trim() },
       { onSuccess: () => setMessage("") },
     );
   };
@@ -35,7 +35,7 @@ export function DebateInput({ threadId, disabled }: DebateInputProps) {
         onChange={(e) => setMessage(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Type your argument... (Enter to send, Shift+Enter for newline)"
-        disabled={disabled || addMessage.isPending}
+        disabled={disabled || addTurn.isPending}
         rows={2}
         className={cn(
           "flex-1 rounded-[var(--radius)] border border-[var(--border-default)]",
@@ -47,7 +47,7 @@ export function DebateInput({ threadId, disabled }: DebateInputProps) {
       />
       <button
         onClick={handleSend}
-        disabled={!message.trim() || addMessage.isPending}
+        disabled={!message.trim() || addTurn.isPending}
         className={cn(
           "px-4 py-2 rounded-[var(--radius)] self-end",
           "bg-[var(--accent-gold)] text-[var(--bg-base)] text-sm font-medium",

@@ -50,12 +50,14 @@ class OnboardingRouter:
         return str(body.get("user_id") or "default")
 
     async def _get_state(self, db, user_id: str) -> dict[str, Any]:
-        rows = await db.express.list(
-            "audit_log", filter={"action": "onboarding", "rule_name": f"user_{user_id}"}
-        )
-        if rows:
+        rule_name = f"user_{user_id}"
+        rows = await db.express.list("audit_log")
+        matching = [
+            r for r in rows if r.get("action") == "onboarding" and r.get("rule_name") == rule_name
+        ]
+        if matching:
             try:
-                return json.loads(rows[-1].get("details", "{}"))
+                return json.loads(matching[-1].get("details", "{}"))
             except (ValueError, TypeError):
                 pass
         return {
@@ -716,14 +718,14 @@ class BacktestDetailRouter:
             positions: dict[str, float] = {}
             for d in by_day[day]:
                 action = str(d.get("action", "")).lower()
-                for ticker in str(d.get("instruments", "")).split(","):
-                    ticker = ticker.strip()
-                    if not ticker:
-                        continue
+                confidence = max(float(d.get("confidence") or 0.1), 0.05)
+                tickers = [t.strip() for t in str(d.get("instruments", "")).split(",") if t.strip()]
+                per_ticker_weight = confidence / len(tickers) if tickers else confidence
+                for ticker in tickers:
                     if action == "buy":
-                        positions[ticker] = positions.get(ticker, 0) + 0.1
+                        positions[ticker] = positions.get(ticker, 0) + per_ticker_weight
                     elif action == "sell":
-                        positions[ticker] = positions.get(ticker, 0) - 0.1
+                        positions[ticker] = positions.get(ticker, 0) - per_ticker_weight
 
             current_value = prev_value
             for ticker, weight in positions.items():

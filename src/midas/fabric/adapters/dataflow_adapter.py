@@ -27,6 +27,7 @@ from midas.fabric.models import (
     ModelRegistryRecord,
     PITKey,
     PITQueryContext,
+    PositionRecord,
     PriceRecord,
     ShadowDecisionRecord,
     UniverseMembership,
@@ -152,6 +153,45 @@ class DataFlowFabricReader(FabricReader):
         if not rows:
             return None
         return self._row_to_model_registry(rows[0])
+
+    async def read_positions(
+        self,
+        instrument: str,
+        as_of: date,
+    ) -> list[PositionRecord]:
+        ctx = PITQueryContext(as_of_date=as_of)
+        rows = await self._df.express.list(
+            "positions",
+            filter={
+                "instrument": instrument,
+                AS_OF_DATE_KEY: ctx.as_of_date.isoformat(),
+            },
+        )
+        return [self._row_to_position(r) for r in rows]
+
+    async def read_decisions(
+        self,
+        instrument: str,
+        as_of: date,
+        lookback_days: int = 730,
+        limit: int = 5,
+    ) -> list[DecisionRecord]:
+        from datetime import timedelta
+
+        ctx = PITQueryContext(as_of_date=as_of)
+        lookback = as_of - timedelta(days=lookback_days)
+        rows = await self._df.express.list(
+            "decisions",
+            filter={
+                "instrument": instrument,
+                AS_OF_DATE_KEY: {
+                    "gte": lookback.isoformat(),
+                    "lte": ctx.as_of_date.isoformat(),
+                },
+            },
+            order_by=f"{AS_OF_DATE_KEY} DESC",
+        )
+        return [self._row_to_decision(r) for r in rows[:limit]]
 
     # ------------------------------------------------------------------
     # Row -> Record helpers
@@ -289,6 +329,62 @@ class DataFlowFabricReader(FabricReader):
                 json.loads(row["calibration_snapshot"]) if row.get("calibration_snapshot") else None
             ),
             probe_result=(json.loads(row["probe_result"]) if row.get("probe_result") else None),
+        )
+
+    def _row_to_position(self, row: dict) -> PositionRecord:
+        from datetime import datetime as dt
+
+        return PositionRecord(
+            position_id=row["position_id"],
+            pit=PITKey(
+                period_end=date.today(),
+                filed_at=dt.fromisoformat(row["filed_at"]) if row.get("filed_at") else dt.now(),
+                restated_at=None,
+                source_vintage=None,
+            ),
+            instrument=row["instrument"],
+            quantity=row["quantity"],
+            entry_price=row["entry_price"],
+            current_price=row["current_price"],
+            unrealised_pnl=row["unrealised_pnl"],
+            as_of=dt.fromisoformat(row["as_of"]) if row.get("as_of") else dt.now(),
+        )
+
+    def _row_to_decision(self, row: dict) -> DecisionRecord:
+        import json
+
+        return DecisionRecord(
+            decision_id=row["decision_id"],
+            pit=PITKey(
+                period_end=(
+                    date.fromisoformat(row["period_end"]) if row.get("period_end") else date.today()
+                ),
+                filed_at=(
+                    datetime.fromisoformat(row["filed_at"])
+                    if row.get("filed_at")
+                    else datetime.now()
+                ),
+                restated_at=None,
+                source_vintage=None,
+            ),
+            autonomy_level=row["autonomy_level"],
+            brief=json.loads(row["brief"]) if row.get("brief") else {},
+            pool_outputs=json.loads(row["pool_outputs"]) if row.get("pool_outputs") else {},
+            router_decision=(
+                json.loads(row["router_decision"]) if row.get("router_decision") else {}
+            ),
+            compliance_checks=(
+                json.loads(row["compliance_checks"]) if row.get("compliance_checks") else {}
+            ),
+            user_action=row["user_action"],
+            debate_thread_id=row.get("debate_thread_id"),
+            execution_result=(
+                json.loads(row["execution_result"]) if row.get("execution_result") else None
+            ),
+            counterfactual=(
+                json.loads(row["counterfactual"]) if row.get("counterfactual") else None
+            ),
+            z_t_snapshot=tuple(row["z_t_snapshot"]) if row.get("z_t_snapshot") else None,
         )
 
 

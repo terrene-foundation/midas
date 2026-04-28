@@ -258,10 +258,118 @@ export interface DebateMessage {
   }>;
 }
 
+/** Multi-turn debate turn record (stored in debate_threads fabric table) */
+export interface DebateTurn {
+  turn_number: number;
+  user_message: string;
+  response: DebateTurnResponse;
+  portfolio_context_snapshot: DebatePortfolioContext;
+  provenance_pointers: DebateProvenancePointer[];
+  timestamp: string;
+}
+
+export interface DebateTurnResponse {
+  recommendation: string;
+  steel_man: string;
+  red_team: string;
+  concession_count: number;
+  final_confidence: number;
+  resolution_state: "updated" | "maintained" | "open" | "envelope_change";
+  rounds?: number;
+  parse_error?: boolean;
+  raw_content_preview?: string;
+}
+
+export interface DebatePortfolioContext {
+  nav?: number;
+  positions_count?: number;
+  positions: DebatePosition[];
+  weights: Record<string, number>;
+  relevant_positions?: DebatePosition[];
+  regime: DebateRegimeState;
+}
+
+export interface DebatePosition {
+  ticker: string;
+  market_value: number;
+  unrealized_pnl: number;
+  quantity: number;
+  avg_cost: number;
+  weight: number;
+}
+
+export interface DebateRegimeState {
+  z_scale: number;
+  ood_score: number;
+  z_dim?: number;
+  period_end?: string;
+}
+
+export interface DebateProvenancePointer {
+  source: string;
+  reference: string;
+  snippet?: string;
+}
+
+/** Full multi-turn debate thread from the debate_threads fabric table */
+export interface MultiTurnDebateThread {
+  thread_id: string;
+  decision_id: string;
+  status: string;
+  turns: DebateTurn[];
+  portfolio_context: DebatePortfolioContext;
+  created_at: string;
+}
+
+/** Result of adding a turn to a multi-turn debate thread */
+export interface DebateTurnResult {
+  thread_id: string;
+  turn_number: number;
+  response: DebateTurnResponse;
+  turns: DebateTurn[];
+  portfolio_context: DebatePortfolioContext;
+  provenance_pointers: DebateProvenancePointer[];
+  status: string;
+}
+
 export interface AuditEntry {
   id: string;
   action: string;
   severity: string;
   details: string;
   filed_at: string;
+}
+
+export interface BriefSummary {
+  id: string;
+  title: string;
+  hypothesis: string;
+  version: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BriefDetail {
+  id: string;
+  title: string;
+  hypothesis: string;
+  constraints: string;
+  regime_assumptions: string;
+  metrics: string;
+  status: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BriefVersion {
+  version: number;
+  title: string;
+  hypothesis: string;
+  constraints: string;
+  regime_assumptions: string;
+  metrics: string;
+  status: string;
+  created_at: string;
 }

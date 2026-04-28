@@ -22,16 +22,32 @@ from dataflow import DataFlow
 from midas import config
 
 if TYPE_CHECKING:
-    pass
+    from midas.ml import ModelRegistry
 
 logger = logging.getLogger(__name__)
+
+
+class MidasFabric(DataFlow):
+    """DataFlow subclass that exposes the ModelRegistry facade."""
+
+    _midas_model_registry: "ModelRegistry | None" = None
+
+    @property
+    def model_registry(self) -> "ModelRegistry":
+        """Lazy-loaded ModelRegistry facade for model pool management."""
+        if self._midas_model_registry is None:
+            from midas.ml import ModelRegistry
+
+            self._midas_model_registry = ModelRegistry(self)
+        return self._midas_model_registry
+
 
 # ---------------------------------------------------------------------------
 # Module-level state — lazy singleton pattern
 # ---------------------------------------------------------------------------
 
-_fabric: DataFlow | None = None
-_fabric_test: DataFlow | None = None
+_fabric: MidasFabric | None = None
+_fabric_test: MidasFabric | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +56,7 @@ _fabric_test: DataFlow | None = None
 
 
 def _register_models(db: DataFlow) -> None:
-    """Register all 23 fabric table models on the given DataFlow instance.
+    """Register all 31 fabric table models on the given DataFlow instance.
 
     Every model follows the DataFlow conventions:
 
@@ -464,6 +480,56 @@ def _register_models(db: DataFlow) -> None:
         report_acknowledged_at: str = ""  # ISO datetime user acknowledged the report
         report_acknowledged_by: str = ""  # user identifier
 
+    # -- 30. notifications ----------------------------------------------------
+    @db.model
+    class notification:
+        id: int
+        user_id: str = ""  # string to match user_id type in decisions table
+        notification_type: str = (
+            "PORTFOLIO_ALERT"  # PORTFOLIO_ALERT | REGIME_CHANGE | TRADE_CONFIRMATION
+        )
+        title: str = ""
+        body: str = ""
+        read: bool = False
+        metadata_json: str = "{}"  # extra context (instrument, decision_id, etc.)
+
+    # -- 31. debate_threads ----------------------------------------------------
+    @db.model
+    class debate_threads:
+        id: int
+        thread_id: str = ""  # UUID string for external reference
+        decision_id: str = ""
+        status: str = "open"  # open | updated | maintained | closed
+        turns_json: str = "[]"  # JSON-encoded list of debate turns
+        portfolio_context_json: str = "{}"  # JSON-encoded live portfolio snapshot
+        created_at: str = ""
+
+    # -- 32. briefs -----------------------------------------------------------
+    @db.model
+    class briefs:
+        id: int
+        title: str
+        hypothesis: str = ""
+        constraints: str = ""
+        regime_assumptions: str = ""
+        metrics: str = ""
+        status: str = "draft"  # draft | active | archived
+        version: int = 1
+
+    # -- 33. brief_versions ----------------------------------------------------
+    @db.model
+    class brief_versions:
+        id: int
+        brief_id: int
+        version: int
+        title: str = ""
+        hypothesis: str = ""
+        constraints: str = ""
+        regime_assumptions: str = ""
+        metrics: str = ""
+        status: str = "draft"
+        created_at: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -500,6 +566,10 @@ FABRIC_TABLES: list[str] = [
     "sessions",
     "notification_settings",
     "paper_live_settings",
+    "notification",
+    "debate_threads",
+    "briefs",
+    "brief_versions",
 ]
 
 
@@ -508,8 +578,8 @@ def create_fabric(
     *,
     test_mode: bool = False,
     auto_migrate: bool = True,
-) -> DataFlow:
-    """Create a new DataFlow instance with all fabric models registered.
+) -> MidasFabric:
+    """Create a new MidasFabric instance with all fabric models registered.
 
     Parameters
     ----------
@@ -525,7 +595,7 @@ def create_fabric(
     Returns
     -------
     DataFlow
-        A fully-initialised DataFlow instance with all 23 fabric tables
+        A fully-initialised DataFlow instance with all 31 fabric tables
         registered and (unless ``auto_migrate=False``) schema created.
     """
     url = "sqlite:///:memory:" if test_mode else (database_url or config.DATABASE_URL)
@@ -539,7 +609,7 @@ def create_fabric(
         },
     )
 
-    db = DataFlow(url, auto_migrate=auto_migrate)
+    db = MidasFabric(url, auto_migrate=auto_migrate)
     _register_models(db)
 
     logger.info(
@@ -554,8 +624,8 @@ async def get_fabric(
     database_url: str | None = None,
     *,
     test_mode: bool = False,
-) -> DataFlow:
-    """Return the lazily-initialised, singleton fabric DataFlow instance.
+) -> MidasFabric:
+    """Return the lazily-initialised, singleton fabric MidasFabric instance.
 
     On first call the instance is created and all models are registered.
     Subsequent calls return the cached instance.
@@ -570,8 +640,8 @@ async def get_fabric(
 
     Returns
     -------
-    DataFlow
-        The shared fabric DataFlow instance.
+    MidasFabric
+        The shared fabric MidasFabric instance with model_registry facade.
     """
     global _fabric, _fabric_test
 
@@ -589,7 +659,7 @@ def reset_fabric() -> None:
     """Reset the cached fabric instances.
 
     Primarily for use in test teardown.  After calling this, the next
-    ``get_fabric()`` invocation creates a fresh DataFlow instance.
+    ``get_fabric()`` invocation creates a fresh MidasFabric instance.
     """
     global _fabric, _fabric_test
 
