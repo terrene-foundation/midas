@@ -29,7 +29,7 @@ SDK release and development infrastructure patterns for:
   - Create deployment-config.md
 
 - **[release-runbook](release-runbook.md)** - SDK release runbook (detailed procedures)
-  - Version locations for all packages (pyproject.toml + __init__.py)
+  - Version locations for all packages (pyproject.toml + **init**.py)
   - SDK dependency pin rules
   - Version consistency verification commands
   - Pre-release, build, publish, post-release step-by-step procedures
@@ -49,6 +49,21 @@ SDK release and development infrastructure patterns for:
   - Tag-triggered publishing pipeline
   - Documentation deployment (ReadTheDocs, GitHub Pages)
   - Self-hosted runner management
+
+- **[python-version-bump](python-version-bump.md)** - Python minor-version bump playbook
+  - When to declare a new CPython release (3.X stable + ≥1 patch)
+  - 3-step recipe: pyproject classifiers → CI matrices → `uv pip install --dry-run --python 3.X` verification
+  - Concrete file list for all 10 packages and 4 CI matrix files
+  - Common gotcha: stale literal version assertions in test fixtures (durable cross-surface contract pattern)
+  - ML stack wheel-lag guidance (torch / transformers / accelerate)
+
+- **[multi-package-release-wave](multi-package-release-wave.md)** - Atomic 7-package release coordination
+  - Reverse dep-graph publish order (`kailash → dataflow → nexus → kaizen → pact → align → ml`)
+  - Per-package version owner + sole CHANGELOG owner rules (parallel-worktree safe)
+  - Pre-flight build + twine + TestPyPI dry-run for every package in the wave
+  - Version consistency verification across 14 version locations
+  - Rollback decision tree (mid-wave failure handling)
+  - kailash-ml 1.0.0 M1 atomic wave (2026-04-23, 7 packages, 227 tests)
 
 ### Docker
 

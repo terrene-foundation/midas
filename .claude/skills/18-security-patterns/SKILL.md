@@ -115,7 +115,7 @@ workflow.add_node("HTTPRequestNode", "api", {
 Security patterns are enforced by:
 
 - `.claude/rules/security.md` - Security rules
-- `scripts/hooks/validate-bash-command.js` - Command validation
+- `.claude/hooks/validate-bash-command.js` - Command validation
 - `gold-standards-validator` agent - Compliance checking
 
 ## When to Use This Skill

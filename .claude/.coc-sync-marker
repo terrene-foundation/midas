@@ -1,6 +1,7 @@
-last_sync: 2026-04-14T13:00:00Z
-source: loom/kailash-coc-claude-py
-version: 3.4.8
-files_updated: 43
-files_new: 6
-files_preserved: true
+{
+  "last_sync": "2026-04-28T17:38:02.665125",
+  "template_version": "3.5.25",
+  "template_repo": "terrene-foundation/kailash-coc-claude-py",
+  "files_updated": 14,
+  "sdk_pins_updated": 9
+}

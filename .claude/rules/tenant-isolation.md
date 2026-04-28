@@ -1,4 +1,18 @@
+---
+priority: 10
+scope: path-scoped
+paths:
+  - "**/tenant*"
+  - "**/multi_tenant*"
+  - "**/dataflow/**"
+  - "**/cache/**"
+  - "**/audit/**"
+---
+
 # Tenant Isolation Rules
+
+
+<!-- slot:neutral-body -->
 
 In a multi-tenant SaaS, tenant isolation is the difference between an API that scales to a thousand customers and a P0 incident that destroys the company's reputation. Cross-tenant data leaks happen because some piece of state — a cache key, a query filter, a metric label, an audit row — was constructed without a tenant dimension. The leak doesn't surface until two tenants happen to share a primary key, at which point one of them sees the other's data.
 
@@ -24,11 +38,26 @@ Single-tenant models keep the simpler form:
 # DO — tenant in the key
 key = f"dataflow:v1:{tenant_id}:{model}:{op}:{params_hash}"
 
+# DO — tenant STAYS in the key even when the secondary key is a per-tenant-unique UUID
+# (Anti-optimization: future secondary-key change could collide; the tenant dimension
+# is defense-in-depth against that future refactor.)
+key = f"dataflow:v1:{tenant_id}:Document:{uuid}"  # keep tenant_id even though uuid is unique
+
 # DO NOT — tenant absent
 key = f"dataflow:v1:{model}:{op}:{params_hash}"  # leaks across tenants
+
+# DO NOT — drop tenant "because the UUID is already unique"
+key = f"dataflow:v1:Document:{uuid}"  # saves 36 bytes, adds a CVE-class hazard
 ```
 
-**Why:** Two tenants with overlapping primary keys (UUID collisions are rare but document IDs, user IDs, slugs, and natural keys are not) will read each other's cached records when the cache key doesn't distinguish them.
+**BLOCKED rationalizations:**
+
+- "The UUID is already unique across tenants, so tenant_id is redundant"
+- "We can save 36 bytes per key by dropping tenant_id from UUID-keyed entries"
+- "UUIDv7 / UUIDv4 collision probability is negligible"
+- "The migration from UUID to natural key is unlikely"
+
+**Why:** Two tenants with overlapping primary keys (UUID collisions are rare but document IDs, user IDs, slugs, and natural keys are not) will read each other's cached records when the cache key doesn't distinguish them. The UUID-is-unique optimization destroys the defense against a future schema change that replaces the UUID with a tenant-local identifier (slug, sequence, email). The optimization saves bytes today and costs a data leak the day the secondary key changes — keeping `tenant_id` in the key is a 36-byte hedge against a CVE-class refactor.
 
 ### 2. Multi-Tenant Strict Mode — Missing Tenant_id Is a Typed Error
 
@@ -66,6 +95,34 @@ async def invalidate_model(self, model: str) -> int:
 ```
 
 **Why:** A user invalidating "their" cache should not clear every other tenant's cache. Tenant-scoped invalidation also enables targeted cache busting on tenant-specific events (a single tenant's password rotation, a single tenant's quota change).
+
+### 3a. Keyspace Version Bumps Require Invalidation-Path Sweep
+
+When the default keyspace version emitted by `CacheKeyGenerator` (or equivalent key-constructor) is bumped — e.g. `v1 → v2` for a cross-SDK parity change or a classification-hash format change — EVERY invalidation entry point in the codebase MUST be audited and updated in the same PR. The safest disposition is to match the version segment as a wildcard (`dataflow:v*:*`) so legacy keys AND current keys are swept in one call.
+
+```python
+# DO — version-wildcard sweep, future-proof
+if tenant_id is not None:
+    express_pattern = f"dataflow:v*:{tenant_id}:{model_name}:*"
+else:
+    express_pattern = f"dataflow:v*:{model_name}:*"
+query_pattern = f"dataflow:{model_name}:v*:*"
+
+# DO NOT — version-pinned sweep after the generator bumps
+express_pattern = f"dataflow:v1:{model_name}:*"   # misses every v2 entry
+query_pattern = f"dataflow:{model_name}:v1:*"
+```
+
+**BLOCKED rationalizations:**
+
+- "The invalidation path runs rarely, v1 entries will expire on their own TTL"
+- "We'll update the invalidation in a follow-up PR"
+- "The generator default can be reverted if it causes issues"
+- "Only one adapter pins the old version; the others are fine"
+
+**Why:** A cache keyspace bump is a producer-side change that silently breaks every consumer-side invalidator pinned to the old version. Write-then-invalidate leaves stale entries on the shared backend (Redis, Memcached, etc.) indefinitely; TTL-based eventual-expiry is not a substitute because TTLs are often multi-hour and users observe the stale reads in the meantime. Version-wildcard sweeps are the structural defense — the only invalidation code that survives the next keyspace bump unchanged.
+
+Origin: kailash-py PR #522 / PR #529 (2026-04-19) — BP-049 keyspace bump `v1→v2`; Redis invalidator missed in the producer-side update, caught by post-release reviewer, fast-patched in dataflow 2.0.12.
 
 ### 4. Metric Labels Carry Tenant_id (Bounded)
 
@@ -131,3 +188,5 @@ rg 'audit_store\.append|record_query_success|record_query_failure' .
 ```
 
 Any match that fails the contract above is a HIGH finding.
+
+<!-- /slot:neutral-body -->

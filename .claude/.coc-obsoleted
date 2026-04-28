@@ -1,0 +1,19 @@
+# COC Obsoleted Paths — managed by loom /sync (v2.9.5)
+# Each path was a former COC artifact location moved/renamed in loom.
+# Downstream /sync MUST recursively delete every match before installing
+# the new layout. Format: one repo-relative path per line. Trailing slash
+# means directory. Comments start with #.
+
+scripts/hooks/
+.claude/scripts/
+scripts/resolve-template.js
+
+# v2.9.3 — /send-it renamed to /decisive (slang removal + directive realignment)
+.claude/commands/send-it.md
+.codex/prompts/send-it.md
+.gemini/commands/send-it.toml
+
+# v2.9.4 — /decisive renamed to /autonomize (autonomous-execution alignment)
+.claude/commands/decisive.md
+.codex/prompts/decisive.md
+.gemini/commands/decisive.toml
