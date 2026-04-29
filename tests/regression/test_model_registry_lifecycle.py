@@ -46,6 +46,13 @@ class FakeDB:
             return [r for r in rows if all(r.get(k) == v for k, v in filter_dict.items())]
         return list(rows)
 
+    async def read(self, table: str, row_id: int) -> dict | None:
+        rows = self._tables.get(table, [])
+        for row in rows:
+            if row.get("id") == row_id:
+                return dict(row)
+        return None
+
     async def update(self, table: str, row_id: int, fields: dict) -> dict | None:
         rows = self._tables.get(table, [])
         for row in rows:

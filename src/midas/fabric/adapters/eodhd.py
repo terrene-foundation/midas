@@ -668,21 +668,42 @@ class EODHDAdapter(BaseAdapter):
                 except (ValueError, TypeError):
                     effective = now.date()
 
-                row: dict[str, Any] = {
+                ratio_or_amount = div.get("value", div.get("amount", 0.0))
+                # DataFlow model fields
+                df_row: dict[str, Any] = {
+                    "ticker": ticker,
+                    "period_end": action_date,
+                    "filed_at": now.isoformat(),
+                    "restated_at": "",
+                    "source_vintage": f"eodhd:dividend:{action_date}",
+                    "action_type": "DIVIDEND",
+                    "value": ratio_or_amount,
+                    "description": f"dividend {effective.isoformat()}",
+                }
+                # Display row with adapter field names
+                display_row = {
                     "instrument": ticker,
                     "period_end": action_date,
                     "filed_at": now.isoformat(),
                     "restated_at": None,
-                    "source_vintage": f"eodhd:dividend:{action_date}",
+                    "source_vintage": df_row["source_vintage"],
                     "action_type": "DIVIDEND",
                     "effective_date": effective.isoformat(),
-                    "ratio_or_amount": div.get("value", div.get("amount")),
+                    "ratio_or_amount": ratio_or_amount,
                     "ticker_after": None,
                 }
 
                 try:
-                    await db.express.create("corporate_actions", row)
-                    created_rows.append(row)
+                    result = await db.express.create("corporate_actions", df_row)
+                    if isinstance(result, dict) and result.get("success") is False:
+                        self._log.warning(
+                            "fetch_corporate_actions.dividend_write_failed",
+                            ticker=ticker,
+                            date=action_date,
+                            error=result.get("error", "unknown"),
+                        )
+                    else:
+                        created_rows.append(display_row)
                 except Exception as exc:
                     self._log.warning(
                         "fetch_corporate_actions.dividend_write_failed",
@@ -715,12 +736,24 @@ class EODHDAdapter(BaseAdapter):
                 except (ValueError, IndexError, ZeroDivisionError):
                     ratio_value = None
 
-                row: dict[str, Any] = {
+                # DataFlow model fields
+                df_row: dict[str, Any] = {
+                    "ticker": ticker,
+                    "period_end": action_date,
+                    "filed_at": now.isoformat(),
+                    "restated_at": "",
+                    "source_vintage": f"eodhd:split:{action_date}",
+                    "action_type": "SPLIT",
+                    "value": ratio_value,
+                    "description": f"split {effective.isoformat()}",
+                }
+                # Display row with adapter field names
+                display_row = {
                     "instrument": ticker,
                     "period_end": action_date,
                     "filed_at": now.isoformat(),
                     "restated_at": None,
-                    "source_vintage": f"eodhd:split:{action_date}",
+                    "source_vintage": df_row["source_vintage"],
                     "action_type": "SPLIT",
                     "effective_date": effective.isoformat(),
                     "ratio_or_amount": ratio_value,
@@ -728,8 +761,16 @@ class EODHDAdapter(BaseAdapter):
                 }
 
                 try:
-                    await db.express.create("corporate_actions", row)
-                    created_rows.append(row)
+                    result = await db.express.create("corporate_actions", df_row)
+                    if isinstance(result, dict) and result.get("success") is False:
+                        self._log.warning(
+                            "fetch_corporate_actions.split_write_failed",
+                            ticker=ticker,
+                            date=action_date,
+                            error=result.get("error", "unknown"),
+                        )
+                    else:
+                        created_rows.append(display_row)
                 except Exception as exc:
                     self._log.warning(
                         "fetch_corporate_actions.split_write_failed",

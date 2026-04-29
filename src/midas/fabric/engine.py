@@ -595,7 +595,7 @@ def create_fabric(
     Returns
     -------
     DataFlow
-        A fully-initialised DataFlow instance with all 31 fabric tables
+        A fully-initialised DataFlow instance with all 33 fabric tables
         registered and (unless ``auto_migrate=False``) schema created.
     """
     url = "sqlite:///:memory:" if test_mode else (database_url or config.DATABASE_URL)

@@ -14,7 +14,7 @@ import os
 import pytest
 
 from midas.fabric.engine import create_fabric, reset_fabric, MidasFabric
-from midas.ml import ModelRegistry, ModelVersion
+from midas.ml import ModelRegistry, ModelVersion, RegistryError
 
 
 @pytest.fixture
@@ -228,6 +228,19 @@ class TestModelRegistryFacadeWiring:
             trained_at="2025-01-15T10:00:00",
         )
         await started_db.model_registry.register(mv)
+        # Register a second model so retiring v1.0.0 doesn't hit the last-model guard
+        mv2 = ModelVersion(
+            model_family="deep_ssm_v1",
+            model_version="v1.1.0",
+            model_type="deep_ssm",
+            training_window_start="2024-01-01",
+            training_window_end="2024-12-31",
+            promotion_status="champion",
+            sample_count=16000,
+            parameter_count=950_000,
+            trained_at="2025-02-15T10:00:00",
+        )
+        await started_db.model_registry.register(mv2)
 
         # Retire the model
         retired = await started_db.model_registry.retire("deep_ssm_v1", "v1.0.0")
@@ -238,10 +251,10 @@ class TestModelRegistryFacadeWiring:
         assert record["promotion_status"] == "retired"
 
     @pytest.mark.asyncio
-    async def test_facade_retire_nonexistent_returns_false(self, started_db):
-        """retire() returns False for nonexistent model."""
-        result = await started_db.model_registry.retire("fake_family", "v0.0.0")
-        assert result is False
+    async def test_facade_retire_nonexistent_raises(self, started_db):
+        """retire() raises RegistryError for nonexistent model."""
+        with pytest.raises(RegistryError, match="not found"):
+            await started_db.model_registry.retire("fake_family", "v0.0.0")
 
     @pytest.mark.asyncio
     async def test_facade_list_by_pool(self, started_db):
@@ -315,8 +328,8 @@ class TestModelRegistryFacadeWiring:
         assert versions == {"v1.0.0", "v1.1.0", "v1.2.0"}
 
     @pytest.mark.asyncio
-    async def test_promote_nonexistent_version_returns_false(self, started_db):
-        """promote() returns False when the target version doesn't exist."""
+    async def test_promote_nonexistent_version_raises(self, started_db):
+        """promote() raises RegistryError when the target version doesn't exist."""
         mv = ModelVersion(
             model_family="ssm_v1",
             model_version="v1.0.0",
@@ -331,5 +344,5 @@ class TestModelRegistryFacadeWiring:
         await started_db.model_registry.register(mv)
 
         # Try to promote a nonexistent version
-        success = await started_db.model_registry.promote("ssm_v1", "v99.0.0")
-        assert success is False
+        with pytest.raises(RegistryError, match="not found"):
+            await started_db.model_registry.promote("ssm_v1", "v99.0.0")

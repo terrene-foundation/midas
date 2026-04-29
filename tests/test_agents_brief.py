@@ -135,8 +135,29 @@ def mock_db():
     """Mock DataFlow instance for DebateTools and ResearchAgent."""
     db = AsyncMock()
     db.express = AsyncMock()
-    db.express.list = AsyncMock(return_value=[])
-    db.express.create = AsyncMock(return_value={"id": 1})
+
+    # Track created debate threads so get_thread can find them
+    _created_threads: list[dict] = []
+
+    async def mock_list(table: str, filter: dict | None = None, **kwargs):
+        if table == "debate_threads" and filter and "thread_id" in filter:
+            # Return matching thread if found
+            tid = filter["thread_id"]
+            for t in _created_threads:
+                if t.get("thread_id") == tid:
+                    return [t]
+            return []
+        return []
+
+    async def mock_create(table: str, row: dict, **kwargs):
+        if table == "debate_threads":
+            # Add id to the row so express.list returns it with id field
+            row_with_id = dict(row, id=1)
+            _created_threads.append(row_with_id)
+        return {"id": 1}
+
+    db.express.list = AsyncMock(side_effect=mock_list)
+    db.express.create = AsyncMock(side_effect=mock_create)
     db.express.read = AsyncMock(return_value={})
     db.express.update = AsyncMock(return_value={})
     return db

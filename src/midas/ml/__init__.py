@@ -91,18 +91,26 @@ class ModelRegistry:
     async def get_champion(self, model_family: str) -> dict[str, Any] | None:
         """Return the champion model for a given family.
 
-        Filters by model_family AND promotion_status='champion',
-        returning the most recent match (highest id).
+        Gets all rows for the family via express.list (cache bypassed), then
+        individually reads each row via express.read to get the current committed
+        status. This avoids express.list returning stale promotion_status after
+        upsert operations due to SQLite transaction isolation.
+        Returns the most recent verified champion (highest id).
         """
         try:
             rows = await self._db.express.list(
                 "model_registry",
                 filter={"model_family": model_family},
+                cache_ttl=0,
             )
-            candidates = [r for r in rows if r["promotion_status"] == "champion"]
-            if not candidates:
-                return None
-            return max(candidates, key=lambda r: r["id"])
+            champion = None
+            for row in rows:
+                # Read each row individually to get current committed state
+                verified = await self._db.express.read("model_registry", row["id"])
+                if verified and verified.get("promotion_status") == "champion":
+                    if champion is None or row["id"] > champion["id"]:
+                        champion = verified
+            return champion
         except Exception as exc:
             logger.error("registry.get_champion_failed", family=model_family, error=str(exc))
             return None

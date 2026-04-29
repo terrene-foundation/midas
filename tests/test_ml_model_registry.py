@@ -258,19 +258,33 @@ class TestModelRegistryWriteAndRead:
 
         loop = asyncio.new_event_loop()
         try:
-            mv = ModelVersion(
+            # Register champion first
+            champion = ModelVersion(
                 model_family="deep_ssm_v1",
                 model_version="v1.0.0",
                 model_type="deep_ssm",
                 training_window_start="2024-01-01",
                 training_window_end="2024-12-31",
-                promotion_status="shadow",
+                promotion_status="champion",
                 sample_count=15000,
                 parameter_count=900_000,
                 trained_at="2025-01-15T10:00:00",
             )
-            loop.run_until_complete(registry.register(mv))
-            retired = loop.run_until_complete(registry.retire("deep_ssm_v1", "v1.0.0"))
+            loop.run_until_complete(registry.register(champion))
+            # Register shadow (the one we will retire)
+            shadow = ModelVersion(
+                model_family="deep_ssm_v1",
+                model_version="v0.9.0",
+                model_type="deep_ssm",
+                training_window_start="2024-01-01",
+                training_window_end="2024-12-31",
+                promotion_status="shadow",
+                sample_count=10000,
+                parameter_count=800_000,
+                trained_at="2024-12-01T10:00:00",
+            )
+            loop.run_until_complete(registry.register(shadow))
+            retired = loop.run_until_complete(registry.retire("deep_ssm_v1", "v0.9.0"))
         finally:
             loop.close()
         assert retired is True

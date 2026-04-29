@@ -344,7 +344,8 @@ class TestOrderStateMachine:
 
     def test_valid_transitions(self):
         """Each allowed transition succeeds."""
-        from midas.execution.order_state import OrderStateMachine, OrderStatus
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState as OrderStatus
 
         sm = OrderStateMachine(None)
 
@@ -375,7 +376,8 @@ class TestOrderStateMachine:
 
     def test_invalid_transitions_rejected(self):
         """Transitions not in the TRANSITIONS map are rejected."""
-        from midas.execution.order_state import OrderStateMachine, OrderStatus
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState as OrderStatus
 
         sm = OrderStateMachine(None)
 
@@ -390,11 +392,12 @@ class TestOrderStateMachine:
 
     def test_terminal_states_have_no_transitions(self):
         """Terminal states (attributed, cancelled, rejected) allow no transitions."""
-        from midas.execution.order_state import OrderStateMachine, OrderStatus
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState as OrderStatus
 
         sm = OrderStateMachine(None)
 
-        all_statuses = OrderStatus.ALL
+        all_statuses = list(OrderStatus)
         for terminal in (OrderStatus.ATTRIBUTED, OrderStatus.CANCELLED, OrderStatus.REJECTED):
             assert sm.is_terminal(terminal) is True
             for target in all_statuses:
@@ -406,7 +409,8 @@ class TestOrderStateMachine:
 
     def test_non_terminal_states_are_not_terminal(self):
         """Non-terminal states report is_terminal=False."""
-        from midas.execution.order_state import OrderStateMachine, OrderStatus
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState as OrderStatus
 
         sm = OrderStateMachine(None)
 
@@ -425,7 +429,8 @@ class TestOrderStateMachine:
     @pytest.mark.asyncio
     async def test_transition_stores_and_returns_status(self, started_db):
         """transition() returns the new status and records the change."""
-        from midas.execution.order_state import OrderStateMachine, OrderStatus
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState as OrderStatus
 
         sm = OrderStateMachine(started_db)
 
@@ -449,7 +454,8 @@ class TestOrderStateMachine:
     @pytest.mark.asyncio
     async def test_transition_invalid_raises(self, started_db):
         """transition() raises on invalid state change."""
-        from midas.execution.order_state import OrderStateMachine, OrderStatus
+        from midas.execution.order_state import OrderStateMachine, IllegalTransitionError
+        from midas.fabric.models import OrderState as OrderStatus
 
         sm = OrderStateMachine(started_db)
 
@@ -465,13 +471,14 @@ class TestOrderStateMachine:
             },
         )
 
-        with pytest.raises(ValueError, match="[Ii]nvalid"):
+        with pytest.raises(IllegalTransitionError):
             await sm.transition(order_id, OrderStatus.FILLED)
 
     @pytest.mark.asyncio
     async def test_transition_terminal_raises(self, started_db):
         """transition() raises when trying to leave a terminal state."""
-        from midas.execution.order_state import OrderStateMachine, OrderStatus
+        from midas.execution.order_state import OrderStateMachine, TerminalStateError
+        from midas.fabric.models import OrderState as OrderStatus
 
         sm = OrderStateMachine(started_db)
 
@@ -487,12 +494,13 @@ class TestOrderStateMachine:
             },
         )
 
-        with pytest.raises(ValueError, match="[Tt]erminal"):
+        with pytest.raises(TerminalStateError):
             await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING)
 
     def test_full_lifecycle_pending_to_attributed(self):
         """Full happy path: pending -> submitted_pending -> working -> filled -> reconciled -> attributed."""
-        from midas.execution.order_state import OrderStateMachine, OrderStatus
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState as OrderStatus
 
         sm = OrderStateMachine(None)
 

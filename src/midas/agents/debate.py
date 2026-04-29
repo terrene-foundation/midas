@@ -253,11 +253,11 @@ class DebateAgent:
         # Build provenance pointers for this turn
         provenance = self._build_provenance_pointers(portfolio_context, brief)
 
-        # Build the turn record
+        # Build the turn record (stores raw LLM content for replay)
         turn_record = {
             "turn_number": len(prior_turns) + 1,
             "user_message": user_message,
-            "response": parsed,
+            "response": result["content"],  # raw string, not parsed dict
             "portfolio_context_snapshot": portfolio_context,
             "provenance_pointers": provenance,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -291,7 +291,7 @@ class DebateAgent:
         return {
             "thread_id": thread_id,
             "turn_number": turn_record["turn_number"],
-            "response": parsed,
+            "response": result["content"],
             "turns": updated_turns,
             "portfolio_context": portfolio_context,
             "provenance_pointers": provenance,
@@ -319,6 +319,8 @@ class DebateAgent:
             prompt_parts.append("\n=== PRIOR DEBATE TURNS ===")
             for turn in prior_turns:
                 resp = turn.get("response", {})
+                if isinstance(resp, str):
+                    resp = {}
                 prompt_parts.append(
                     f"\n--- Turn {turn.get('turn_number')} ---\n"
                     f"User: {turn.get('user_message', '')}\n"

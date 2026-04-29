@@ -479,6 +479,8 @@ class DebateTools:
         except Exception as exc:
             logger.error("tools.update_decision_failed", error=str(exc))
             return {"decision_id": decision_id, "status": "error", "error": "Update failed"}
+
+    async def generate_counterfactual(self, decision_id: str) -> dict:
         """Tool 9: Generate counterfactual for a decision.
 
         Retrieves the original decision and constructs a counterfactual

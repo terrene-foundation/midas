@@ -369,8 +369,8 @@ class TestEODHDAdapterCorporateActions:
         assert rows[0]["ratio_or_amount"] == 0.24
         assert rows[1]["ratio_or_amount"] == 0.25
 
-        # Verify rows were persisted
-        cas = await started_db.express.list("corporate_actions", filter={"instrument": "AAPL.US"})
+        # Verify rows were persisted — filter uses model field name (ticker, not instrument)
+        cas = await started_db.express.list("corporate_actions", filter={"ticker": "AAPL.US"})
         assert len(cas) == 2
 
         await adapter.close()
