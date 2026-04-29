@@ -249,8 +249,8 @@ class TestEODHDAdapterFundamentals:
         # ROE = net_income / book_value = 97000 / 290000
         assert result["roe"] == pytest.approx(0.3345, rel=1e-3)
 
-        # Verify row was persisted
-        funds = await started_db.express.list("fundamentals", filter={"instrument": "AAPL.US"})
+        # Verify row was persisted — filter uses model field name (ticker, not instrument)
+        funds = await started_db.express.list("fundamentals", filter={"ticker": "AAPL.US"})
         assert len(funds) == 1
 
         await adapter.close()

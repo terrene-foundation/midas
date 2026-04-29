@@ -1,188 +1,183 @@
 """Order state machine for IBKR execution lifecycle.
 
-Maps full IBKR order-state enumeration to Midas states per spec 14 S6.
-Every transition is audited to the audit_log fabric table.
+Uses the canonical OrderState enum from fabric/models.py as the single source
+of truth for all order states. Enforces legal transitions per spec 14 S6 and
+audits every transition to the audit_log fabric table.
 
 Ref: specs/14-ibkr-integration.md S6 (Order State Machine)
 """
 
+import json
 import time
 
 import structlog
 from dataflow import DataFlow
 
+from midas.fabric.models import OrderState
+
 logger = structlog.get_logger("midas.execution.order_state")
 
 
-class OrderStatus:
-    """Order status constants aligned with IBKR states per spec 14 S6."""
+class IllegalTransitionError(Exception):
+    """Raised when an order state transition is not allowed."""
 
-    PENDING = "pending"
-    SUBMITTED_PENDING = "submitted_pending"  # IBKR PendingSubmit
-    SUBMITTED_WAITING = "submitted_waiting"  # IBKR PreSubmitted (broker-held)
-    WORKING = "working"  # IBKR Submitted
-    PARTIAL_FILLED = "partial_filled"  # IBKR Filled (partial)
-    FILLED = "filled"  # IBKR Filled (complete)
-    RECONCILED = "reconciled"
-    ATTRIBUTED = "attributed"
-    CANCEL_PENDING = "cancel_pending"  # IBKR PendingCancel
-    CANCELLED = "cancelled"  # IBKR Cancelled
-    CANCELLED_API = "cancelled_api"  # IBKR ApiCancelled
-    INACTIVE_FLAGGED = "inactive_flagged"  # IBKR Inactive (trap state)
-    REJECTED = "rejected"
-
-    ALL = (
-        PENDING,
-        SUBMITTED_PENDING,
-        SUBMITTED_WAITING,
-        WORKING,
-        PARTIAL_FILLED,
-        FILLED,
-        RECONCILED,
-        ATTRIBUTED,
-        CANCEL_PENDING,
-        CANCELLED,
-        CANCELLED_API,
-        INACTIVE_FLAGGED,
-        REJECTED,
-    )
+    def __init__(self, order_id: str, from_state: OrderState, to_state: OrderState):
+        self.order_id = order_id
+        self.from_state = from_state
+        self.to_state = to_state
+        super().__init__(
+            f"Order '{order_id}': illegal transition " f"'{from_state.value}' -> '{to_state.value}'"
+        )
 
 
-# Transition table: from_status -> set of allowed target statuses.
-TRANSITIONS = {
-    OrderStatus.PENDING: {
-        OrderStatus.SUBMITTED_PENDING,
-        OrderStatus.CANCEL_PENDING,
-        OrderStatus.CANCELLED,
+class TerminalStateError(Exception):
+    """Raised when attempting to transition from a terminal state."""
+
+    def __init__(self, order_id: str, state: OrderState):
+        self.order_id = order_id
+        self.state = state
+        super().__init__(
+            f"Order '{order_id}' is in terminal state '{state.value}' — "
+            f"no further transitions allowed"
+        )
+
+
+# Transition table: OrderState -> set of allowed target OrderStates.
+# Covers both IBKR-driven transitions and Midas-internal lifecycle (PENDING,
+# RECONCILED, ATTRIBUTED).
+TRANSITIONS: dict[OrderState, set[OrderState]] = {
+    OrderState.PENDING: {
+        OrderState.SUBMITTED_PENDING,
+        OrderState.CANCEL_PENDING,
+        OrderState.CANCELLED,
+        OrderState.REJECTED,
     },
-    OrderStatus.SUBMITTED_PENDING: {
-        OrderStatus.SUBMITTED_WAITING,
-        OrderStatus.WORKING,
-        OrderStatus.CANCEL_PENDING,
-        OrderStatus.REJECTED,
+    OrderState.SUBMITTED_PENDING: {
+        OrderState.SUBMITTED_WAITING,
+        OrderState.WORKING,
+        OrderState.CANCEL_PENDING,
+        OrderState.REJECTED,
     },
-    OrderStatus.SUBMITTED_WAITING: {
-        OrderStatus.WORKING,
-        OrderStatus.PARTIAL_FILLED,
-        OrderStatus.CANCEL_PENDING,
-        OrderStatus.REJECTED,
-        OrderStatus.INACTIVE_FLAGGED,
+    OrderState.SUBMITTED_WAITING: {
+        OrderState.WORKING,
+        OrderState.PARTIAL_FILLED,
+        OrderState.CANCEL_PENDING,
+        OrderState.REJECTED,
+        OrderState.INACTIVE_FLAGGED,
     },
-    OrderStatus.WORKING: {
-        OrderStatus.PARTIAL_FILLED,
-        OrderStatus.FILLED,
-        OrderStatus.CANCEL_PENDING,
-        OrderStatus.REJECTED,
-        OrderStatus.INACTIVE_FLAGGED,
+    OrderState.WORKING: {
+        OrderState.PARTIAL_FILLED,
+        OrderState.FILLED,
+        OrderState.CANCEL_PENDING,
+        OrderState.REJECTED,
+        OrderState.INACTIVE_FLAGGED,
     },
-    OrderStatus.PARTIAL_FILLED: {
-        OrderStatus.FILLED,
-        OrderStatus.CANCEL_PENDING,
+    OrderState.PARTIAL_FILLED: {
+        OrderState.FILLED,
+        OrderState.CANCEL_PENDING,
     },
-    OrderStatus.FILLED: {OrderStatus.RECONCILED},
-    OrderStatus.RECONCILED: {OrderStatus.ATTRIBUTED},
-    OrderStatus.ATTRIBUTED: set(),
-    OrderStatus.CANCEL_PENDING: {
-        OrderStatus.CANCELLED,
-        OrderStatus.CANCELLED_API,
-        OrderStatus.FILLED,
+    OrderState.FILLED: {
+        OrderState.RECONCILED,
     },
-    OrderStatus.CANCELLED: set(),
-    OrderStatus.CANCELLED_API: set(),
-    OrderStatus.INACTIVE_FLAGGED: {
-        OrderStatus.CANCELLED,
-        OrderStatus.REJECTED,
+    OrderState.RECONCILED: {
+        OrderState.ATTRIBUTED,
     },
-    OrderStatus.REJECTED: set(),
+    OrderState.ATTRIBUTED: set(),
+    OrderState.CANCEL_PENDING: {
+        OrderState.CANCELLED,
+        OrderState.CANCELLED_API,
+        OrderState.FILLED,
+    },
+    OrderState.CANCELLED: set(),
+    OrderState.CANCELLED_API: set(),
+    OrderState.INACTIVE_FLAGGED: {
+        OrderState.CANCELLED,
+        OrderState.REJECTED,
+    },
+    OrderState.REJECTED: set(),
 }
 
-TERMINAL_STATES = {
-    OrderStatus.ATTRIBUTED,
-    OrderStatus.CANCELLED,
-    OrderStatus.CANCELLED_API,
-    OrderStatus.REJECTED,
-}
+TERMINAL_STATES: set[OrderState] = OrderState.terminal_states()
 
 
 class OrderStateMachine:
     """Order state machine with full IBKR state mapping per spec 14 S6.
 
     Transition table is defined by the TRANSITIONS constant above.
-    Every transition is audited.
+    Every transition is audited. Uses OrderState enum from fabric/models.py
+    as the canonical type.
     """
 
-    def __init__(self, db: DataFlow | None = None):
+    def __init__(self, db: DataFlow):
         self._db = db
         self._log = structlog.get_logger("midas.execution.order_state")
 
-    def can_transition(self, current: str, target: str) -> bool:
+    @staticmethod
+    def can_transition(current: OrderState, target: OrderState) -> bool:
         """Check if transitioning from current to target status is allowed."""
         allowed = TRANSITIONS.get(current, set())
         return target in allowed
 
-    def is_terminal(self, status: str) -> bool:
+    @staticmethod
+    def is_terminal(status: OrderState) -> bool:
         """Check if the status is terminal (no further transitions possible)."""
         return status in TERMINAL_STATES
 
     async def transition(
         self,
         order_id: str,
-        new_status: str,
-        details: dict | None = None,
+        new_status: OrderState,
+        *,
+        reason: str = "",
+        ibkr_message: str | None = None,
     ) -> dict:
         """Transition order status. Audits every transition.
 
-        Raises ValueError if the transition is invalid or the current state
-        is terminal.
+        Raises IllegalTransitionError if the transition is not allowed.
+        Raises TerminalStateError if the current state is terminal.
         """
-        if self._db is None:
-            raise RuntimeError("OrderStateMachine requires a DataFlow instance for transitions")
-
-        # Read current order
         order = await self._db.express.read("orders", order_id)
-        current_status = order["status"]
+        raw_status = order.get("status") if order else None
+        if not raw_status:
+            raise ValueError(f"Order '{order_id}' not found or has no status")
+        current_status = OrderState(raw_status)
 
         if self.is_terminal(current_status):
-            raise ValueError(
-                f"Order '{order_id}' is in terminal state '{current_status}' — "
-                f"no further transitions allowed"
-            )
+            raise TerminalStateError(order_id, current_status)
 
         if not self.can_transition(current_status, new_status):
-            raise ValueError(
-                f"Invalid transition for order '{order_id}': "
-                f"'{current_status}' -> '{new_status}' is not allowed"
-            )
+            raise IllegalTransitionError(order_id, current_status, new_status)
 
-        # Update the order status
         await self._db.express.update(
             "orders",
             order_id,
-            {"status": new_status},
+            {"status": new_status.value},
         )
 
         self._log.info(
             "order_state.transition",
             order_id=order_id,
-            previous_status=current_status,
-            new_status=new_status,
+            previous_status=current_status.value,
+            new_status=new_status.value,
+            reason=reason,
         )
 
         # Audit the transition
-        if details is None:
-            details = {}
-        details["previous_status"] = current_status
-        details["new_status"] = new_status
+        details = {
+            "previous_status": current_status.value,
+            "new_status": new_status.value,
+            "reason": reason,
+        }
+        if ibkr_message:
+            details["ibkr_message"] = ibkr_message
 
         try:
-            import json
-
             await self._db.express.create(
                 "audit_log",
                 {
-                    "audit_id": f"order_transition:{order_id}:{new_status}",
+                    "audit_id": f"order_transition:{order_id}:{new_status.value}:{int(time.time() * 1000)}",
                     "rule_name": "order_state_transition",
-                    "action": new_status,
+                    "action": new_status.value,
                     "details": json.dumps(details),
                     "agent": "order_state_machine",
                     "period_end": "",
@@ -195,8 +190,8 @@ class OrderStateMachine:
 
         return {
             "order_id": order_id,
-            "status": new_status,
-            "previous_status": current_status,
+            "status": new_status.value,
+            "previous_status": current_status.value,
         }
 
     def handle_inactive_flagged(self, order_id: str, ibkr_message: str) -> dict:

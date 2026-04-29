@@ -313,9 +313,18 @@ class PositionRecord:
 class OrderState(Enum):
     """IBKR order states mapped to Midas canonical states.
 
-    Ref: specs/14-ibkr-integration.md §6 — order state machine.
+    Includes Midas-internal lifecycle states (PENDING, RECONCILED, ATTRIBUTED)
+    that extend the IBKR-mapped states for full order lifecycle management.
+
+    Ref: specs/14-ibkr-integration.md S6 (order state table).
     """
 
+    # Midas-internal (not from IBKR)
+    PENDING = "pending"  # Pre-submission — order created locally, not yet sent
+    RECONCILED = "reconciled"  # Post-fill — fills verified against execution brief
+    ATTRIBUTED = "attributed"  # Post-reconciliation — costs attributed, fully terminal
+
+    # IBKR-mapped states per spec 14 S6
     SUBMITTED_PENDING = "submitted_pending"  # PendingSubmit — awaiting initial confirmation
     CANCEL_PENDING = "cancel_pending"  # PendingCancel — cancellation in flight
     SUBMITTED_WAITING = "submitted_waiting"  # PreSubmitted — broker-held, not yet active
@@ -324,19 +333,19 @@ class OrderState(Enum):
     FILLED = "filled"  # Filled (complete) — terminal
     CANCELLED = "cancelled"  # Cancelled — terminal
     CANCELLED_API = "cancelled_api"  # ApiCancelled — terminal, API-initiated
-    INACTIVE_FLAGGED = "inactive_flagged"  # Inactive — requires intervention
+    INACTIVE_FLAGGED = "inactive_flagged"  # Inactive — trap state, requires intervention
     REJECTED = "rejected"  # Rejection taxonomy from IBKR
 
     @classmethod
     def terminal_states(cls) -> set["OrderState"]:
         """Return the set of terminal states (no further transitions expected)."""
-        return {cls.FILLED, cls.CANCELLED, cls.CANCELLED_API}
+        return {cls.CANCELLED, cls.CANCELLED_API, cls.ATTRIBUTED, cls.REJECTED}
 
     @classmethod
     def from_ibkr(cls, ibkr_status: str) -> "OrderState":
         """Map IBKR status string to Midas OrderState.
 
-        Ref: specs/14-ibkr-integration.md §6 table.
+        Ref: specs/14-ibkr-integration.md S6 table.
         """
         mapping = {
             "pendingsubmit": cls.SUBMITTED_PENDING,
@@ -358,11 +367,21 @@ class OrderState(Enum):
     def is_working(self) -> bool:
         """Return True if this state represents an active working order."""
         return self in {
+            self.PENDING,
             self.SUBMITTED_PENDING,
             self.CANCEL_PENDING,
             self.SUBMITTED_WAITING,
             self.WORKING,
             self.PARTIAL_FILLED,
+        }
+
+    def is_cancellable(self) -> bool:
+        """Return True if this state can transition to CANCEL_PENDING."""
+        return self in {
+            self.PENDING,
+            self.SUBMITTED_PENDING,
+            self.SUBMITTED_WAITING,
+            self.WORKING,
         }
 
 

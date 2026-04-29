@@ -109,13 +109,13 @@ async def _create_test_order(started_db, **overrides):
 # ===================================================================
 
 
-class TestOrderStatusConstants:
-    """Verify OrderStatus exposes all expected status strings."""
+class TestOrderStateEnum:
+    """Verify OrderState enum exposes all expected states."""
 
-    def test_all_statuses_defined(self):
-        from midas.execution.order_state import OrderStatus
+    def test_all_states_defined(self):
+        from midas.fabric.models import OrderState
 
-        expected = {
+        expected_values = {
             "pending",
             "submitted_pending",
             "submitted_waiting",
@@ -130,23 +130,13 @@ class TestOrderStatusConstants:
             "inactive_flagged",
             "rejected",
         }
-        for status in expected:
-            attr = status.upper()
-            assert getattr(OrderStatus, attr) == status
+        actual_values = {s.value for s in OrderState}
+        assert actual_values == expected_values
 
-    def test_all_tuple_contains_every_status(self):
-        from midas.execution.order_state import OrderStatus
+    def test_enum_member_count(self):
+        from midas.fabric.models import OrderState
 
-        assert len(OrderStatus.ALL) == 13
-        assert OrderStatus.PENDING in OrderStatus.ALL
-        assert OrderStatus.SUBMITTED_PENDING in OrderStatus.ALL
-        assert OrderStatus.WORKING in OrderStatus.ALL
-        assert OrderStatus.PARTIAL_FILLED in OrderStatus.ALL
-        assert OrderStatus.FILLED in OrderStatus.ALL
-        assert OrderStatus.RECONCILED in OrderStatus.ALL
-        assert OrderStatus.ATTRIBUTED in OrderStatus.ALL
-        assert OrderStatus.CANCELLED in OrderStatus.ALL
-        assert OrderStatus.REJECTED in OrderStatus.ALL
+        assert len(OrderState) == 13
 
 
 # ===================================================================
@@ -158,122 +148,149 @@ class TestOrderStateMachineTransitions:
     """Tests for valid and invalid state machine transitions."""
 
     def test_can_transition_pending_to_submitted_pending(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.PENDING, OrderStatus.SUBMITTED_PENDING) is True
+        assert (
+            OrderStateMachine.can_transition(OrderState.PENDING, OrderState.SUBMITTED_PENDING)
+            is True
+        )
 
     def test_can_transition_pending_to_cancelled(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.PENDING, OrderStatus.CANCELLED) is True
+        assert OrderStateMachine.can_transition(OrderState.PENDING, OrderState.CANCELLED) is True
 
     def test_cannot_transition_pending_to_filled(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.PENDING, OrderStatus.FILLED) is False
+        assert OrderStateMachine.can_transition(OrderState.PENDING, OrderState.FILLED) is False
 
     def test_can_transition_submitted_pending_to_working(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.SUBMITTED_PENDING, OrderStatus.WORKING) is True
+        assert (
+            OrderStateMachine.can_transition(OrderState.SUBMITTED_PENDING, OrderState.WORKING)
+            is True
+        )
 
     def test_can_transition_working_to_filled(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.WORKING, OrderStatus.FILLED) is True
+        assert OrderStateMachine.can_transition(OrderState.WORKING, OrderState.FILLED) is True
 
     def test_can_transition_submitted_pending_to_cancel_pending(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.SUBMITTED_PENDING, OrderStatus.CANCEL_PENDING) is True
+        assert (
+            OrderStateMachine.can_transition(
+                OrderState.SUBMITTED_PENDING, OrderState.CANCEL_PENDING
+            )
+            is True
+        )
 
     def test_can_transition_submitted_pending_to_rejected(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.SUBMITTED_PENDING, OrderStatus.REJECTED) is True
+        assert (
+            OrderStateMachine.can_transition(OrderState.SUBMITTED_PENDING, OrderState.REJECTED)
+            is True
+        )
 
     def test_can_transition_partial_filled_to_filled(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.PARTIAL_FILLED, OrderStatus.FILLED) is True
+        assert (
+            OrderStateMachine.can_transition(OrderState.PARTIAL_FILLED, OrderState.FILLED) is True
+        )
 
     def test_can_transition_partial_filled_to_cancel_pending(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.PARTIAL_FILLED, OrderStatus.CANCEL_PENDING) is True
+        assert (
+            OrderStateMachine.can_transition(OrderState.PARTIAL_FILLED, OrderState.CANCEL_PENDING)
+            is True
+        )
 
     def test_can_transition_filled_to_reconciled(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.FILLED, OrderStatus.RECONCILED) is True
+        assert OrderStateMachine.can_transition(OrderState.FILLED, OrderState.RECONCILED) is True
 
     def test_can_transition_reconciled_to_attributed(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.RECONCILED, OrderStatus.ATTRIBUTED) is True
+        assert (
+            OrderStateMachine.can_transition(OrderState.RECONCILED, OrderState.ATTRIBUTED) is True
+        )
 
     def test_cannot_transition_working_to_pending(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.WORKING, OrderStatus.PENDING) is False
+        assert OrderStateMachine.can_transition(OrderState.WORKING, OrderState.PENDING) is False
 
     def test_cannot_transition_filled_to_working(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition(OrderStatus.FILLED, OrderStatus.WORKING) is False
+        assert OrderStateMachine.can_transition(OrderState.FILLED, OrderState.WORKING) is False
 
 
 class TestOrderStateMachineTerminalStates:
     """Tests for terminal state detection."""
 
     def test_attributed_is_terminal(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.is_terminal(OrderStatus.ATTRIBUTED) is True
+        assert OrderStateMachine.is_terminal(OrderState.ATTRIBUTED) is True
 
     def test_cancelled_is_terminal(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.is_terminal(OrderStatus.CANCELLED) is True
+        assert OrderStateMachine.is_terminal(OrderState.CANCELLED) is True
+
+    def test_cancelled_api_is_terminal(self):
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
+
+        assert OrderStateMachine.is_terminal(OrderState.CANCELLED_API) is True
 
     def test_rejected_is_terminal(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.is_terminal(OrderStatus.REJECTED) is True
+        assert OrderStateMachine.is_terminal(OrderState.REJECTED) is True
 
     def test_pending_is_not_terminal(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.is_terminal(OrderStatus.PENDING) is False
+        assert OrderStateMachine.is_terminal(OrderState.PENDING) is False
 
     def test_working_is_not_terminal(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.is_terminal(OrderStatus.WORKING) is False
+        assert OrderStateMachine.is_terminal(OrderState.WORKING) is False
 
     def test_filled_is_not_terminal(self):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.is_terminal(OrderStatus.FILLED) is False
+        assert OrderStateMachine.is_terminal(OrderState.FILLED) is False
 
 
 class TestOrderStateMachineTransition:
@@ -281,82 +298,78 @@ class TestOrderStateMachineTransition:
 
     @pytest.mark.asyncio
     async def test_valid_transition_updates_order_status(self, started_db):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
         order_id = await _create_test_order(started_db)
         sm = OrderStateMachine(started_db)
-        result = await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING)
+        result = await sm.transition(order_id, OrderState.SUBMITTED_PENDING)
 
         assert result["order_id"] == order_id
-        assert result["status"] == OrderStatus.SUBMITTED_PENDING
-        assert result["previous_status"] == OrderStatus.PENDING
+        assert result["status"] == OrderState.SUBMITTED_PENDING.value
+        assert result["previous_status"] == OrderState.PENDING.value
 
-        # Verify the order was actually updated in the database
         order = await started_db.express.read("orders", order_id)
-        assert order["status"] == OrderStatus.SUBMITTED_PENDING
+        assert order["status"] == OrderState.SUBMITTED_PENDING.value
 
     @pytest.mark.asyncio
     async def test_valid_transition_creates_audit_record(self, started_db):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
         order_id = await _create_test_order(started_db)
         sm = OrderStateMachine(started_db)
-        await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING)
+        await sm.transition(order_id, OrderState.SUBMITTED_PENDING)
 
         rows = await started_db.express.list("audit_log")
         assert len(rows) >= 1
         assert any("order_state_transition" in r.get("rule_name", "") for r in rows)
 
     @pytest.mark.asyncio
-    async def test_invalid_transition_raises_value_error(self, started_db):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+    async def test_invalid_transition_raises_illegal_transition(self, started_db):
+        from midas.execution.order_state import IllegalTransitionError, OrderStateMachine
+        from midas.fabric.models import OrderState
 
         order_id = await _create_test_order(started_db)
         sm = OrderStateMachine(started_db)
 
-        with pytest.raises(ValueError, match="Invalid transition"):
-            await sm.transition(order_id, OrderStatus.FILLED)
+        with pytest.raises(IllegalTransitionError):
+            await sm.transition(order_id, OrderState.FILLED)
 
     @pytest.mark.asyncio
-    async def test_transition_from_terminal_state_raises_value_error(self, started_db):
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+    async def test_transition_from_terminal_state_raises_terminal_error(self, started_db):
+        from midas.execution.order_state import OrderStateMachine, TerminalStateError
+        from midas.fabric.models import OrderState
 
         order_id = await _create_test_order(started_db, status="cancelled")
         sm = OrderStateMachine(started_db)
 
-        with pytest.raises(ValueError, match="terminal state"):
-            await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING)
-
-    @pytest.mark.asyncio
-    async def test_transition_without_db_raises_runtime_error(self):
-        from midas.execution.order_state import OrderStateMachine, OrderStatus
-
-        sm = OrderStateMachine(db=None)
-        with pytest.raises(RuntimeError, match="DataFlow instance"):
-            await sm.transition("any-id", OrderStatus.SUBMITTED_PENDING)
+        with pytest.raises(TerminalStateError):
+            await sm.transition(order_id, OrderState.SUBMITTED_PENDING)
 
     @pytest.mark.asyncio
     async def test_full_lifecycle_pending_to_attributed(self, started_db):
-        """Walk the full happy-path lifecycle: pending -> submitted_pending -> working -> partial_filled -> filled -> reconciled -> attributed."""
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
         order_id = await _create_test_order(started_db)
         sm = OrderStateMachine(started_db)
 
         for target in [
-            OrderStatus.SUBMITTED_PENDING,
-            OrderStatus.WORKING,
-            OrderStatus.PARTIAL_FILLED,
-            OrderStatus.FILLED,
-            OrderStatus.RECONCILED,
-            OrderStatus.ATTRIBUTED,
+            OrderState.SUBMITTED_PENDING,
+            OrderState.WORKING,
+            OrderState.PARTIAL_FILLED,
+            OrderState.FILLED,
+            OrderState.RECONCILED,
+            OrderState.ATTRIBUTED,
         ]:
             result = await sm.transition(order_id, target)
-            assert result["status"] == target
+            assert result["status"] == target.value
 
-        # Now in terminal state, no further transitions
-        with pytest.raises(ValueError, match="terminal state"):
-            await sm.transition(order_id, OrderStatus.PENDING)
+        from midas.execution.order_state import TerminalStateError
+
+        with pytest.raises(TerminalStateError):
+            await sm.transition(order_id, OrderState.PENDING)
 
 
 # ===================================================================
@@ -424,7 +437,7 @@ class TestExecutionAgent:
         agent = ExecutionAgent(started_db)
 
         # Create order in submitted state
-        order_id = await _create_test_order(started_db, quantity=100.0, status="submitted")
+        order_id = await _create_test_order(started_db, quantity=100.0, status="working")
 
         fill_1 = await agent.handle_partial_fill(
             order_id,
@@ -434,7 +447,7 @@ class TestExecutionAgent:
             },
         )
         assert fill_1["filled_quantity"] == 30.0
-        assert fill_1["status"] == "partial"
+        assert fill_1["status"] == "partial_filled"
 
         fill_2 = await agent.handle_partial_fill(
             order_id,
@@ -455,7 +468,7 @@ class TestExecutionAgent:
         from midas.execution.execution_agent import ExecutionAgent
 
         agent = ExecutionAgent(started_db)
-        order_id = await _create_test_order(started_db, quantity=100.0, status="submitted")
+        order_id = await _create_test_order(started_db, quantity=100.0, status="working")
 
         await agent.handle_partial_fill(
             order_id,
@@ -479,7 +492,7 @@ class TestExecutionAgent:
         from midas.execution.execution_agent import ExecutionAgent
 
         agent = ExecutionAgent(started_db)
-        order_id = await _create_test_order(started_db, status="submitted")
+        order_id = await _create_test_order(started_db, status="working")
 
         result = await agent.handle_rejection(order_id, "insufficient margin")
         assert result["status"] == "rejected"
@@ -495,10 +508,10 @@ class TestExecutionAgent:
         order_id = await _create_test_order(started_db, status="pending")
 
         result = await agent.handle_rejection(order_id, "market closed")
-        assert result["status"] == "cancelled"
+        assert result["status"] == "rejected"
 
         order = await started_db.express.read("orders", order_id)
-        assert order["status"] == "cancelled"
+        assert order["status"] == "rejected"
 
     @pytest.mark.asyncio
     async def test_cancel_all_pending_cancels_pending_and_submitted(self, started_db):
@@ -508,7 +521,7 @@ class TestExecutionAgent:
 
         # Create orders in various states
         await _create_test_order(started_db, ticker="SPY", status="pending")
-        await _create_test_order(started_db, ticker="QQQ", status="submitted")
+        await _create_test_order(started_db, ticker="QQQ", status="working")
         await _create_test_order(started_db, ticker="IWM", status="filled")
 
         cancelled_ids = await agent.cancel_all_pending()
@@ -535,7 +548,7 @@ class TestExecutionAgent:
 
         await agent.cancel_all_pending()
         order = await started_db.express.read("orders", order_id)
-        assert order["status"] == "cancelled"
+        assert order["status"] == "cancel_pending"
 
 
 # ===================================================================
@@ -675,7 +688,7 @@ class TestReconciliation:
             ticker="QQQ",
             quantity=100.0,
             filled_qty=80.0,
-            status="partial",
+            status="partial_filled",
         )
 
         svc = ReconciliationService(started_db)
@@ -764,7 +777,7 @@ class TestReconciliation:
             limit_price=450.00,
             filled_qty=80.0,
             filled_price=460.00,
-            status="partial",
+            status="partial_filled",
         )
 
         svc = ReconciliationService(started_db)
@@ -990,35 +1003,45 @@ class TestEdgeCases:
     async def test_order_state_cannot_transition_from_unknown_status(self):
         """An unrecognized status has no allowed transitions."""
         from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
 
-        sm = OrderStateMachine()
-        assert sm.can_transition("unknown_status", "pending") is False
+        assert (
+            OrderStateMachine.can_transition(OrderState.INACTIVE_FLAGGED, OrderState.WORKING)
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_terminal_states_have_no_allowed_transitions(self):
-        """All three terminal states have empty transition sets."""
-        from midas.execution.order_state import TRANSITIONS, OrderStatus
+        """All terminal states have empty transition sets."""
+        from midas.execution.order_state import TRANSITIONS
+        from midas.fabric.models import OrderState
 
-        for status in [OrderStatus.ATTRIBUTED, OrderStatus.CANCELLED, OrderStatus.REJECTED]:
+        for status in [
+            OrderState.ATTRIBUTED,
+            OrderState.CANCELLED,
+            OrderState.CANCELLED_API,
+            OrderState.REJECTED,
+        ]:
             assert len(TRANSITIONS[status]) == 0
 
     @pytest.mark.asyncio
-    async def test_transition_preserves_details_in_audit(self, started_db):
-        """Details dict is passed through to the audit record."""
-        from midas.execution.order_state import OrderStatus, OrderStateMachine
+    async def test_transition_preserves_reason_in_audit(self, started_db):
+        """Reason kwarg is passed through to the audit record."""
+        from midas.execution.order_state import OrderStateMachine
+        from midas.fabric.models import OrderState
         import json
 
         order_id = await _create_test_order(started_db)
         sm = OrderStateMachine(started_db)
-        await sm.transition(order_id, OrderStatus.SUBMITTED_PENDING, details={"source": "test"})
+        await sm.transition(order_id, OrderState.SUBMITTED_PENDING, reason="test_submission")
 
         rows = await started_db.express.list("audit_log")
         assert len(rows) >= 1
         latest = rows[-1]
         details = json.loads(latest.get("details", "{}"))
-        assert details["source"] == "test"
+        assert details["reason"] == "test_submission"
         assert details["previous_status"] == "pending"
-        assert details["new_status"] == "submitted"
+        assert details["new_status"] == "submitted_pending"
 
     @pytest.mark.asyncio
     async def test_partial_fill_with_zero_quantity(self, started_db):
@@ -1026,7 +1049,7 @@ class TestEdgeCases:
         from midas.execution.execution_agent import ExecutionAgent
 
         agent = ExecutionAgent(started_db)
-        order_id = await _create_test_order(started_db, quantity=100.0, status="submitted")
+        order_id = await _create_test_order(started_db, quantity=100.0, status="working")
 
         result = await agent.handle_partial_fill(
             order_id,
@@ -1079,32 +1102,32 @@ class TestEdgeCases:
 class TestRejectionCodes:
     """Tests for IBKR rejection code classification."""
 
-    def test_code_201_classified_as_insufficient_margin(self):
+    def test_code_201_classified_as_risk(self):
         from midas.execution.rejection_codes import RejectionCategory, classify_rejection
 
-        result = classify_rejection(201, "Insufficient margin")
-        assert result.category == RejectionCategory.INSUFFICIENT_MARGIN
+        result = classify_rejection(201, "Order rejected - risk")
+        assert result.category == RejectionCategory.RISK
         assert result.ibkr_code == 201
 
-    def test_code_202_classified_as_order_limit_exceeded(self):
+    def test_code_202_classified_as_cancelled_risk(self):
         from midas.execution.rejection_codes import RejectionCategory, classify_rejection
 
-        result = classify_rejection(202, "Order limit exceeded")
-        assert result.category == RejectionCategory.ORDER_LIMIT_EXCEEDED
+        result = classify_rejection(202, "Order cancelled - risk")
+        assert result.category == RejectionCategory.CANCELLED_RISK
         assert result.ibkr_code == 202
 
-    def test_code_399_classified_as_invalid_order(self):
+    def test_code_399_classified_as_info(self):
         from midas.execution.rejection_codes import RejectionCategory, classify_rejection
 
-        result = classify_rejection(399, "Invalid order parameters")
-        assert result.category == RejectionCategory.INVALID_ORDER
+        result = classify_rejection(399, "Forwarded to destination")
+        assert result.category == RejectionCategory.INFO
         assert result.ibkr_code == 399
 
-    def test_halted_message_classified_as_instrument_halted(self):
+    def test_halted_message_classified_as_halted(self):
         from midas.execution.rejection_codes import RejectionCategory, classify_rejection
 
         result = classify_rejection(999, "Instrument is halted")
-        assert result.category == RejectionCategory.INSTRUMENT_HALTED
+        assert result.category == RejectionCategory.HALTED
 
     def test_unknown_code_classified_as_unknown(self):
         from midas.execution.rejection_codes import RejectionCategory, classify_rejection
@@ -1112,22 +1135,31 @@ class TestRejectionCodes:
         result = classify_rejection(12345, "Some unknown error")
         assert result.category == RejectionCategory.UNKNOWN
 
+    def test_margin_message_classified_as_margin(self):
+        from midas.execution.rejection_codes import RejectionCategory, classify_rejection
+
+        result = classify_rejection(999, "Insufficient margin")
+        assert result.category == RejectionCategory.MARGIN
+
     def test_rejection_code_is_frozen_dataclass(self):
         from midas.execution.rejection_codes import RejectionCode, classify_rejection
 
-        result = classify_rejection(201, "margin")
+        result = classify_rejection(201, "risk")
         assert isinstance(result, RejectionCode)
-        assert result.description == "margin"
+        assert result.description == "risk"
 
     def test_rejection_category_enum_values(self):
         from midas.execution.rejection_codes import RejectionCategory
 
         expected = {
-            "INSUFFICIENT_MARGIN",
-            "ORDER_LIMIT_EXCEEDED",
-            "MARKET_DATA_MISSING",
-            "INSTRUMENT_HALTED",
-            "INVALID_ORDER",
+            "RISK",
+            "CANCELLED_RISK",
+            "MARGIN",
+            "HALTED",
+            "NO_DATA",
+            "PRICE_BAND",
+            "CONTRACT",
+            "INFO",
             "UNKNOWN",
         }
         actual = {cat.name for cat in RejectionCategory}

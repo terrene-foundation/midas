@@ -5,7 +5,9 @@ brief composition, multi-turn debate with tool dispatch, and produces
 a final recommendation.
 """
 
+from datetime import date, datetime, timedelta
 import structlog
+import uuid
 
 logger = structlog.get_logger("midas.agents.orchestrator")
 
@@ -119,9 +121,90 @@ class AgentOrchestrator:
             confidence=recommendation["confidence"],
         )
 
+        # Stage 5: Compose and persist immutable decision audit record
+        audit_id = await self._compose_decision_audit(
+            decision_id=decision_id,
+            instruments=instruments,
+            brief=brief,
+            debate_result=debate_result,
+            recommendation=recommendation,
+            research_result=research_result,
+            decision_context=decision_context,
+        )
+
         return {
             "research": research_result,
             "brief": brief,
             "debate": debate_result,
             "recommendation": recommendation,
+            "decision_id": decision_id,
+            "audit_id": audit_id,
         }
+
+    async def _compose_decision_audit(
+        self,
+        decision_id: str,
+        instruments: list[str],
+        brief: dict,
+        debate_result: dict,
+        recommendation: dict,
+        research_result: dict,
+        decision_context: dict,
+    ) -> str | None:
+        """Write immutable DecisionRecord to fabric decisions table.
+
+        Per spec 07 S7 — all 8 fields: brief, pool_outputs, router_decision,
+        compliance_checks, user_action, debate_thread_id, execution_result,
+        counterfactual.
+        """
+        now = datetime.utcnow()
+        today = date.today()
+        audit_id = str(uuid.uuid4())
+
+        pool_outputs = research_result.get("sources", [])
+        router_decision = decision_context.get("router_decision", {})
+        compliance_checks = decision_context.get("compliance_checks", {})
+        user_action = recommendation.get("action", "DEBATE")
+        debate_thread_id = debate_result.get("thread_id")
+        execution_result = decision_context.get("execution_result")
+        counterfactual = decision_context.get("counterfactual")
+
+        pit_record = {
+            "period_end": today.isoformat(),
+            "filed_at": now.isoformat(),
+            "restated_at": None,
+            "source_vintage": None,
+        }
+
+        audit_record = {
+            "id": audit_id,
+            "decision_id": decision_id,
+            "pit": pit_record,
+            "autonomy_level": decision_context.get("autonomy_level", 2),
+            "brief": brief,
+            "pool_outputs": pool_outputs,
+            "router_decision": router_decision,
+            "compliance_checks": compliance_checks,
+            "user_action": user_action,
+            "debate_thread_id": debate_thread_id,
+            "execution_result": execution_result,
+            "counterfactual": counterfactual,
+            "z_t_snapshot": decision_context.get("z_t_snapshot"),
+        }
+
+        try:
+            await self._db.express.create("decisions", audit_record)
+            logger.info(
+                "orchestrator.decision_audit_written",
+                audit_id=audit_id,
+                decision_id=decision_id,
+                user_action=user_action,
+            )
+            return audit_id
+        except Exception as exc:
+            logger.warning(
+                "orchestrator.decision_audit_failed",
+                audit_id=audit_id,
+                error=str(exc),
+            )
+            return None

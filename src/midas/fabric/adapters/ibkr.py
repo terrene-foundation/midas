@@ -38,6 +38,8 @@ from midas.fabric.models import OrderState
 if TYPE_CHECKING:
     from dataflow import DataFlow
 
+    from midas.execution.order_manager import OrderManager
+
 logger = structlog.get_logger("midas.fabric.adapters.ibkr")
 
 # ---------------------------------------------------------------------------
@@ -797,6 +799,13 @@ class IBKRAdapter(BaseAdapter):
         db = self._get_db()
         created_rows: list[dict[str, Any]] = []
 
+        # Lazy-init OrderManager for state machine enforcement
+        order_manager: OrderManager | None = None
+        if db is not None:
+            from midas.execution.order_manager import OrderManager
+
+            order_manager = OrderManager(db)
+
         for item in raw_orders:
             ticker = item.get("symbol", item.get("ticker", ""))
             if not ticker:
@@ -805,9 +814,12 @@ class IBKRAdapter(BaseAdapter):
             broker_order_id = str(item.get("order_id", item.get("id", "")))
             ibkr_status_str = item.get("status", "")
             new_state = OrderState.from_ibkr(ibkr_status_str)
+            ibkr_code = item.get("code")
+            ibkr_message = item.get("message")
 
             # Detect state transition by looking up the last known state in fabric
             previous_state: OrderState | None = None
+            existing_order_id: str | None = None
             if broker_order_id and db is not None:
                 try:
                     existing_orders = await db.express.list(
@@ -815,24 +827,44 @@ class IBKRAdapter(BaseAdapter):
                     )
                     if existing_orders:
                         prev_status_str = existing_orders[0].get("status", "")
+                        existing_order_id = str(existing_orders[0]["id"])
                         try:
                             previous_state = OrderState(prev_status_str)
                         except ValueError:
                             previous_state = OrderState.from_ibkr(prev_status_str)
                 except Exception:
-                    pass  # Non-fatal: we'll log the transition without previous state
+                    pass
 
-            # Log state transition if state changed
-            if previous_state is not None and previous_state != new_state:
-                self._log_transition(
-                    order_id=broker_order_id,
-                    ticker=ticker,
-                    from_state=previous_state,
-                    to_state=new_state,
-                    ibkr_message=ibkr_status_str,
-                )
+            # Route state transitions through OrderManager for enforcement
+            if (
+                previous_state is not None
+                and previous_state != new_state
+                and order_manager is not None
+                and existing_order_id is not None
+            ):
+                fill_qty = float(item.get("filled_qty", item.get("filled", 0)) or 0)
+                fill_price = float(item.get("filled_price", item.get("avg_fill_price", 0)) or 0)
+                try:
+                    await order_manager.process_ibkr_status_update(
+                        existing_order_id,
+                        ibkr_status_str,
+                        ibkr_code=int(ibkr_code) if ibkr_code else None,
+                        ibkr_message=str(ibkr_message) if ibkr_message else ibkr_status_str,
+                        fill_quantity=fill_qty if fill_qty else None,
+                        fill_price=fill_price if fill_price else None,
+                    )
+                    created_rows.append(
+                        {"broker_order_id": broker_order_id, "status": new_state.value}
+                    )
+                    continue  # OrderManager handled the transition, skip direct create
+                except Exception as exc:
+                    self._log.warning(
+                        "fetch_order_status.order_manager_failed",
+                        order_id=existing_order_id,
+                        error=str(exc),
+                    )
+                    # Fall through to direct create if OrderManager fails
             elif previous_state is None and new_state is not None:
-                # Initial submission transition
                 self._log.info(
                     "order.state_transition",
                     order_id=broker_order_id,

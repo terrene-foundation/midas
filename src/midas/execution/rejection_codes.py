@@ -1,12 +1,10 @@
 """Rejection code taxonomy mapping IBKR codes to Midas classifications.
 
-Maps Interactive Brokers API error codes to a structured classification
-so the decision brief can explain rejections in domain terms rather
-than raw broker codes.
+Covers all 8 spec-required categories plus unknown fallback per spec 14 S7.
+Each RejectionCategory carries handling strategy, severity, and user-surfacing
+requirements.
 
-Covers all 8 spec-required categories per specs/14 S7.
-
-Ref: specs/14-ibkr-integration.md S7 (Rejection Taxonomy)
+Ref: specs/14-ibkr-integration.md S7 (Rejection Code Taxonomy)
 """
 
 from dataclasses import dataclass
@@ -14,17 +12,61 @@ from enum import Enum
 
 
 class RejectionCategory(Enum):
-    """Structured rejection classification per spec 14 S7."""
+    """Structured rejection classification per spec 14 S7.
 
-    INSUFFICIENT_MARGIN = "rejected.margin"
-    ORDER_LIMIT_EXCEEDED = "rejected.risk"
-    MARKET_DATA_MISSING = "rejected.no_data"
-    INSTRUMENT_HALTED = "rejected.halted"
-    INVALID_ORDER = "rejected.invalid"
+    Each category defines how Midas responds to the rejection: whether to
+    auto-retry, alert the user, or kill outstanding orders for the instrument.
+    """
+
+    RISK = "rejected.risk"
+    CANCELLED_RISK = "cancelled.risk"
+    MARGIN = "rejected.margin"
+    HALTED = "rejected.halted"
+    NO_DATA = "rejected.no_data"
     PRICE_BAND = "rejected.price_band"
-    UNKNOWN_CONTRACT = "rejected.contract"
-    DUPLICATE_ORDER = "rejected.duplicate"
+    CONTRACT = "rejected.contract"
+    INFO = "info"
     UNKNOWN = "unknown"
+
+    @property
+    def should_auto_retry(self) -> bool:
+        """Whether the rejection is safe to auto-retry."""
+        return self in {RejectionCategory.INFO, RejectionCategory.PRICE_BAND}
+
+    @property
+    def requires_user_alert(self) -> bool:
+        """Whether the rejection must be surfaced to the user."""
+        return self in {
+            RejectionCategory.RISK,
+            RejectionCategory.CANCELLED_RISK,
+            RejectionCategory.MARGIN,
+            RejectionCategory.HALTED,
+            RejectionCategory.NO_DATA,
+            RejectionCategory.CONTRACT,
+        }
+
+    @property
+    def kills_outstanding(self) -> bool:
+        """Whether to cancel all outstanding orders for the instrument."""
+        return self == RejectionCategory.HALTED
+
+    @property
+    def severity(self) -> str:
+        """Severity level for logging and alerting."""
+        if self in {RejectionCategory.RISK, RejectionCategory.MARGIN}:
+            return "critical"
+        if self in {
+            RejectionCategory.HALTED,
+            RejectionCategory.NO_DATA,
+            RejectionCategory.CONTRACT,
+        }:
+            return "high"
+        if self in {
+            RejectionCategory.CANCELLED_RISK,
+            RejectionCategory.PRICE_BAND,
+        }:
+            return "medium"
+        return "low"
 
 
 @dataclass(frozen=True)
@@ -38,31 +80,31 @@ class RejectionCode:
 
 # IBKR error code to category mapping per spec 14 S7.
 _IBKR_CODE_MAP: dict[int, RejectionCategory] = {
-    201: RejectionCategory.INSUFFICIENT_MARGIN,
-    202: RejectionCategory.ORDER_LIMIT_EXCEEDED,
-    399: RejectionCategory.INVALID_ORDER,
-    404: RejectionCategory.UNKNOWN_CONTRACT,
+    201: RejectionCategory.RISK,
+    202: RejectionCategory.CANCELLED_RISK,
+    399: RejectionCategory.INFO,
+    404: RejectionCategory.CONTRACT,
     421: RejectionCategory.PRICE_BAND,
-    502: RejectionCategory.MARKET_DATA_MISSING,
-    504: RejectionCategory.MARKET_DATA_MISSING,
-    1100: RejectionCategory.DUPLICATE_ORDER,
+    502: RejectionCategory.NO_DATA,
+    504: RejectionCategory.NO_DATA,
 }
 
 # Substring patterns in the message text that indicate specific categories.
 _MESSAGE_PATTERNS: list[tuple[str, RejectionCategory]] = [
-    ("halted", RejectionCategory.INSTRUMENT_HALTED),
-    ("halt", RejectionCategory.INSTRUMENT_HALTED),
-    ("auction", RejectionCategory.INSTRUMENT_HALTED),
-    ("insufficient margin", RejectionCategory.INSUFFICIENT_MARGIN),
-    ("buying power", RejectionCategory.INSUFFICIENT_MARGIN),
-    ("no market data", RejectionCategory.MARKET_DATA_MISSING),
-    ("market data permission", RejectionCategory.MARKET_DATA_MISSING),
+    ("halted", RejectionCategory.HALTED),
+    ("halt", RejectionCategory.HALTED),
+    ("auction", RejectionCategory.HALTED),
+    ("insufficient margin", RejectionCategory.MARGIN),
+    ("buying power", RejectionCategory.MARGIN),
+    ("no market data", RejectionCategory.NO_DATA),
+    ("market data permission", RejectionCategory.NO_DATA),
     ("price outside", RejectionCategory.PRICE_BAND),
     ("outside range", RejectionCategory.PRICE_BAND),
-    ("unknown contract", RejectionCategory.UNKNOWN_CONTRACT),
-    ("invalid contract", RejectionCategory.UNKNOWN_CONTRACT),
-    ("security not found", RejectionCategory.UNKNOWN_CONTRACT),
-    ("duplicate order", RejectionCategory.DUPLICATE_ORDER),
+    ("unknown contract", RejectionCategory.CONTRACT),
+    ("invalid contract", RejectionCategory.CONTRACT),
+    ("security not found", RejectionCategory.CONTRACT),
+    ("order rejected", RejectionCategory.RISK),
+    ("risk", RejectionCategory.RISK),
 ]
 
 

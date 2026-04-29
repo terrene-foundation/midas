@@ -1,17 +1,17 @@
 """Execution agent — routes approved decisions to IBKR with priority queue.
 
-Creates orders, handles partial fills, broker rejections, and provides
-a kill switch (cancel_all_pending).
+Delegates order lifecycle management to OrderManager for state machine
+enforcement and rejection classification. Creates orders, handles partial
+fills, broker rejections, and provides a kill switch (cancel_all_pending).
 
 Ref: M15 — ExecutionAgent
 """
 
-import time
-
 import structlog
 from dataflow import DataFlow
 
-from midas.execution.order_state import OrderStatus, OrderStateMachine
+from midas.execution.order_manager import OrderManager
+from midas.fabric.models import OrderState
 
 logger = structlog.get_logger("midas.execution.execution_agent")
 
@@ -21,7 +21,7 @@ class ExecutionAgent:
 
     def __init__(self, db: DataFlow):
         self._db = db
-        self._state_machine = OrderStateMachine(db)
+        self._order_manager = OrderManager(db)
         self._log = structlog.get_logger("midas.execution.execution_agent")
 
     async def execute_decision(
@@ -33,60 +33,44 @@ class ExecutionAgent:
 
         Returns {order_id, status, fills}.
         """
-        instrument = decision["instrument"]
-        action = decision.get("action", "BUY")
-        quantity = decision.get("quantity", 0)
-        order_type = decision.get("order_type", "MARKET")
-        limit_price = decision.get("limit_price", 0.0)
         params = execution_params or {}
+        instrument = decision["instrument"]
 
         self._log.info(
             "execution.create_order",
             instrument=instrument,
-            action=action,
-            quantity=quantity,
-            order_type=order_type,
+            action=decision.get("action", "BUY"),
+            quantity=decision.get("quantity", 0),
+            order_type=decision.get("order_type", "MARKET"),
         )
 
-        # Create the order record in pending state
-        await self._db.express.create(
-            "orders",
+        result = await self._order_manager.submit_order(
             {
                 "ticker": instrument,
-                "side": action,
-                "order_type": order_type,
-                "quantity": quantity,
-                "limit_price": limit_price,
-                "status": OrderStatus.PENDING,
-                "filled_qty": 0.0,
-                "filled_price": 0.0,
-                "submitted_at": "",
-                "filled_at": "",
-                "broker_order_id": "",
+                "side": decision.get("action", "BUY"),
+                "order_type": decision.get("order_type", "MARKET"),
+                "quantity": decision.get("quantity", 0),
+                "limit_price": decision.get("limit_price", 0.0),
                 "parent_decision_id": params.get("decision_id", ""),
-            },
+            }
         )
-
-        # Retrieve the generated ID via list (express.create does not return it)
-        rows = await self._db.express.list("orders", filter={"ticker": instrument})
-        order_id = str(rows[-1]["id"])
 
         self._log.info(
             "execution.order_created",
-            order_id=order_id,
+            order_id=result["order_id"],
             instrument=instrument,
         )
 
         return {
-            "order_id": order_id,
-            "status": OrderStatus.PENDING,
+            "order_id": result["order_id"],
+            "status": result["status"],
             "fills": [],
         }
 
     async def handle_partial_fill(self, order_id: str, fill_info: dict) -> dict:
         """Handle partial fill - update order with fill info.
 
-        Transitions to partial status and records the fill details.
+        Delegates to OrderManager for state machine enforcement.
         """
         self._log.info(
             "execution.partial_fill",
@@ -98,28 +82,21 @@ class ExecutionAgent:
         fill_price = fill_info.get("fill_price", 0.0)
         fill_qty = fill_info.get("fill_quantity", 0.0)
 
-        # Read current order to accumulate fills
-        order = await self._db.express.read("orders", order_id)
-        current_filled = order.get("filled_qty", 0.0) or 0.0
-        new_filled = current_filled + fill_qty
-
-        # Update the order with partial fill
-        await self._db.express.update(
-            "orders",
+        # Delegate state transition to OrderManager
+        result = await self._order_manager.process_ibkr_status_update(
             order_id,
-            {
-                "status": OrderStatus.PARTIAL_FILLED,
-                "filled_qty": new_filled,
-                "filled_price": fill_price,
-            },
+            "PartiallyFilled",
+            fill_quantity=fill_qty,
+            fill_price=fill_price,
         )
 
         # Create fill record
+        order = await self._db.express.read("orders", order_id)
         await self._db.express.create(
             "fills",
             {
                 "order_id": order_id,
-                "ticker": order.get("ticker", ""),
+                "ticker": (order or {}).get("ticker", ""),
                 "fill_price": fill_price,
                 "fill_qty": fill_qty,
                 "commission": fill_info.get("commission", 0.0),
@@ -135,18 +112,21 @@ class ExecutionAgent:
             },
         )
 
+        order_data = await self._db.express.read("orders", order_id)
+        filled_qty = (order_data or {}).get("filled_qty", 0.0) or 0.0
+
         return {
             "order_id": order_id,
-            "status": OrderStatus.PARTIAL_FILLED,
-            "filled_quantity": new_filled,
+            "status": OrderState.PARTIAL_FILLED.value,
+            "filled_quantity": filled_qty,
             "fill_price": fill_price,
         }
 
     async def handle_rejection(self, order_id: str, rejection_reason: str) -> dict:
-        """Handle broker rejection.
+        """Handle broker rejection via OrderManager.
 
-        Transitions the order to rejected if it is in submitted state,
-        or cancelled otherwise.
+        Delegates to process_ibkr_status_update with REJECTED state and
+        classifies the rejection code.
         """
         self._log.warning(
             "execution.rejection",
@@ -154,23 +134,11 @@ class ExecutionAgent:
             reason=rejection_reason,
         )
 
-        order = await self._db.express.read("orders", order_id)
-        current_status = order.get("status", OrderStatus.PENDING)
-
-        # Determine the appropriate terminal state
-        if current_status == OrderStatus.SUBMITTED_PENDING:
-            target = OrderStatus.REJECTED
-        else:
-            target = OrderStatus.CANCELLED
-
-        # Try state machine transition; if it fails, force the status
-        try:
-            result = await self._state_machine.transition(order_id, target)
-        except ValueError:
-            # Force update for cases where the state machine path is not direct
-            await self._db.express.update("orders", order_id, {"status": target})
-            result = {"order_id": order_id, "status": target}
-
+        result = await self._order_manager.process_ibkr_status_update(
+            order_id,
+            "Rejected",
+            ibkr_message=rejection_reason,
+        )
         return result
 
     async def cancel_all_pending(self) -> list[str]:
@@ -181,30 +149,25 @@ class ExecutionAgent:
         self._log.warning("execution.kill_switch", action="cancel_all_pending")
 
         cancelled_ids: list[str] = []
+        cancellable_states = [
+            OrderState.PENDING,
+            OrderState.SUBMITTED_PENDING,
+            OrderState.WORKING,
+        ]
 
-        # List all orders that are in a cancellable state
-        cancellable_statuses = (
-            OrderStatus.PENDING,
-            OrderStatus.SUBMITTED_PENDING,
-            OrderStatus.WORKING,
-        )
-
-        for status in cancellable_statuses:
+        for state in cancellable_states:
             try:
-                orders = await self._db.express.list("orders", filter={"status": status})
+                orders = await self._db.express.list("orders", filter={"status": state.value})
                 for order in orders:
                     order_id = str(order["id"])
-                    await self._db.express.update(
-                        "orders",
-                        order_id,
-                        {"status": OrderStatus.CANCELLED},
-                    )
-                    cancelled_ids.append(order_id)
-                    self._log.info("execution.cancelled", order_id=order_id)
+                    result = await self._order_manager.cancel_order(order_id)
+                    if "error" not in result:
+                        cancelled_ids.append(order_id)
+                        self._log.info("execution.cancelled", order_id=order_id)
             except Exception as exc:
                 self._log.error(
                     "execution.cancel_failed",
-                    status=status,
+                    status=state.value,
                     error=str(exc),
                 )
 

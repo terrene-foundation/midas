@@ -372,37 +372,65 @@ class EODHDAdapter(BaseAdapter):
                 date_value = inc.get("date")
                 period_date = date_value if isinstance(date_value, str) else period_key
 
-            fiscal_period_label = f"FY {period_key[:4]}" if len(period_key) >= 4 else period_key
+            # DataFlow fundamentals model field names (ticker, earnings, debt, cash)
+            # differ from the EODHD API response field names. Map accordingly.
+            de_ratio = highlights.get("DebtToEquity")
+            net_income = inc.get("netIncome")
+            book_value = bal.get("totalStockholderEquity")
 
             row: dict[str, Any] = {
-                "instrument": ticker,
+                "ticker": ticker,
                 "period_end": period_date,
                 "filed_at": now.isoformat(),
-                "restated_at": None,
+                "restated_at": "",
                 "source_vintage": f"eodhd:fundamentals:{period_key}",
-                "fiscal_period": fiscal_period_label,
                 "revenue": inc.get("totalRevenue"),
-                "ebitda": inc.get("ebitda"),
-                "net_income": inc.get("netIncome"),
-                "book_value": bal.get("totalStockholderEquity"),
+                "earnings": net_income,
+                "book_value": book_value,
+                "debt": 0.0,
+                "cash": 0.0,
                 "shares_outstanding": general.get("SharesOutstanding"),
                 "pe_ratio": highlights.get("PERatio"),
                 "pb_ratio": highlights.get("PriceToBookRatio"),
-                "de_ratio": highlights.get("DebtToEquity"),
                 "roe": None,
             }
 
             # Compute ROE if both net_income and equity are available
-            ni = row["net_income"]
-            bv = row["book_value"]
-            if ni is not None and bv is not None and bv != 0:
-                row["roe"] = round(ni / bv, 4)
+            if net_income is not None and book_value is not None and book_value != 0:
+                row["roe"] = round(net_income / book_value, 4)
+
+            # Also build a display-friendly result with adapter field names
+            display_row = {
+                "instrument": ticker,
+                "period_end": period_date,
+                "filed_at": now.isoformat(),
+                "restated_at": None,
+                "source_vintage": row["source_vintage"],
+                "fiscal_period": f"FY {period_key[:4]}" if len(period_key) >= 4 else period_key,
+                "revenue": row["revenue"],
+                "ebitda": inc.get("ebitda"),
+                "net_income": net_income,
+                "book_value": book_value,
+                "shares_outstanding": row["shares_outstanding"],
+                "pe_ratio": row["pe_ratio"],
+                "pb_ratio": row["pb_ratio"],
+                "de_ratio": de_ratio,
+                "roe": row["roe"],
+            }
 
             try:
-                await db.express.create("fundamentals", row)
-                rows_written += 1
-                if not written:
-                    written = row
+                result = await db.express.create("fundamentals", row)
+                if isinstance(result, dict) and result.get("success") is False:
+                    self._log.warning(
+                        "fetch_fundamentals.row_write_failed",
+                        ticker=ticker,
+                        period=period_key,
+                        error=result.get("error", "unknown"),
+                    )
+                else:
+                    rows_written += 1
+                    if not written:
+                        written = display_row
             except Exception as exc:
                 self._log.warning(
                     "fetch_fundamentals.row_write_failed",

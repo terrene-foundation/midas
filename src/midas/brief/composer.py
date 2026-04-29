@@ -9,6 +9,8 @@ Orchestrates the brief composition pipeline:
 6. TopOfFoldCard produces the decide-in-10s card
 """
 
+from datetime import date
+
 import structlog
 
 from midas.agents.analyst import AnalystAgent
@@ -41,17 +43,23 @@ class BriefComposer:
     fabric_reader:
         A FabricReader instance for grounding data (positions, risk, analogues).
         If None, grounding enrichment is skipped.
+    debate_tools:
+        Optional DebateTools instance for latent-similarity-based analogues.
     """
 
     def __init__(
         self,
         analyst: AnalystAgent,
         fabric_reader=None,
+        debate_tools=None,
     ):
         self._analyst = analyst
         self._density = DensityMatrix()
         self._templates = BriefTemplates()
-        self._enricher = BriefEnricher(fabric_reader) if fabric_reader else None
+        self._reader = fabric_reader
+        self._enricher = (
+            BriefEnricher(fabric_reader, debate_tools=debate_tools) if fabric_reader else None
+        )
 
     async def _generate_brief_with_grounding(
         self,
@@ -117,6 +125,22 @@ class BriefComposer:
         instruments = decision_context.get("instruments", [])
         learner_family = decision_context.get("learner_family", "ssl_transformer_v1")
 
+        # Fetch z_t (z_vector) from champion latent state for retrieve_analogue
+        z_t: list[float] | None = None
+        if self._reader and learner_family:
+            try:
+                z_rows = await self._reader.read_latent_state(learner_family, date.today())
+                for row in z_rows:
+                    if isinstance(row, dict):
+                        z_v = row.get("z_vector")
+                    else:
+                        z_v = getattr(row, "z_vector", None)
+                    if z_v:
+                        z_t = list(z_v)
+                        break
+            except Exception:
+                pass  # graceful degradation — z_t is optional
+
         # Step 1: Fetch grounding context from fabric (positions, risk, analogues)
         grounding_context = None
         if self._enricher and instruments:
@@ -124,6 +148,7 @@ class BriefComposer:
                 grounding_context = await self._enricher.enrich(
                     instruments=instruments,
                     learner_family=learner_family,
+                    z_t=z_t,
                 )
                 logger.info(
                     "composer.grounding_enriched",

@@ -16,6 +16,10 @@ from __future__ import annotations
 
 import structlog
 from datetime import date
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from midas.agents.tools import DebateTools
 
 from midas.fabric.models import (
     AS_OF_DATE_KEY,
@@ -35,6 +39,9 @@ class BriefEnricher:
     ----------
     fabric_reader:
         A FabricReader (e.g. DataFlowFabricReader) for fabric queries.
+    debate_tools:
+        Optional DebateTools instance for latent-similarity-based analogues
+        via ``retrieve_analogue(z_t)``.
     as_of:
         Point-in-time date for PIT-compliant reads. Defaults to today.
     max_analogues:
@@ -44,10 +51,12 @@ class BriefEnricher:
     def __init__(
         self,
         fabric_reader: FabricReader,
+        debate_tools: "DebateTools | None" = None,
         as_of: date | None = None,
         max_analogues: int = 5,
     ) -> None:
         self._reader = fabric_reader
+        self._debate_tools = debate_tools
         self._as_of = as_of or date.today()
         self._max_analogues = max_analogues
 
@@ -55,6 +64,7 @@ class BriefEnricher:
         self,
         instruments: list[str],
         learner_family: str = "ssl_transformer_v1",
+        z_t: list[float] | None = None,
     ) -> dict:
         """Fetch all grounding context for a brief.
 
@@ -73,7 +83,7 @@ class BriefEnricher:
             Empty strings when fabric reads fail (graceful degradation).
         """
         positions_text, risk_text, analogues_text = await self._fetch_all(
-            instruments, learner_family
+            instruments, learner_family, z_t
         )
 
         logger.info(
@@ -90,12 +100,14 @@ class BriefEnricher:
             "analogues_text": analogues_text,
         }
 
-    async def _fetch_all(self, instruments: list[str], learner_family: str) -> tuple[str, str, str]:
+    async def _fetch_all(
+        self, instruments: list[str], learner_family: str, z_t: list[float] | None
+    ) -> tuple[str, str, str]:
         """Fetch all three context types, handling per-type failures gracefully."""
         positions_text, risk_text = await self._fetch_positions_and_risk(
             instruments, learner_family
         )
-        analogues_text = await self._fetch_analogues(instruments)
+        analogues_text = await self._fetch_analogues(instruments, z_t)
         return positions_text, risk_text, analogues_text
 
     async def _fetch_positions_and_risk(
@@ -144,8 +156,41 @@ class BriefEnricher:
 
         return positions_text, risk_text
 
-    async def _fetch_analogues(self, instruments: list[str]) -> str:
-        """Fetch historical decisions by instrument for analogue grounding."""
+    async def _fetch_analogues(self, instruments: list[str], z_t: list[float] | None) -> str:
+        """Fetch historical decisions by instrument for analogue grounding.
+
+        When ``DebateTools`` is available and ``z_t`` is provided, uses
+        ``retrieve_analogue(z_t)`` for latent-similarity-ranked analogues.
+        Falls back to fabric ``read_decisions`` when ``DebateTools`` is
+        unavailable or ``z_t`` is not provided.
+        """
+        # Use retrieve_analogue (latent similarity) when tools + z_t available
+        if self._debate_tools and z_t:
+            try:
+                analogues = await self._debate_tools.retrieve_analogue(
+                    z_t, top_k=self._max_analogues
+                )
+                if analogues:
+                    analogue_lines = []
+                    for ana in analogues:
+                        sim = ana.get("similarity", 0.0)
+                        dec_id = ana.get("decision_id", "?")
+                        action = ana.get("action", "?")
+                        outcome = ana.get("outcome", "?")
+                        analogue_lines.append(
+                            f"  [sim={sim:.2f}] id={dec_id[:8]}... | action={action} | outcome={outcome}"
+                        )
+                    header = (
+                        f"HISTORICAL DECISIONS (by latent similarity, top {self._max_analogues}):\n"
+                    )
+                    return header + "\n".join(analogue_lines)
+            except Exception as exc:
+                logger.warning(
+                    "brief.enricher.retrieve_analogue_failed",
+                    error=str(exc),
+                )
+
+        # Fallback: fabric read_decisions
         analogue_lines: list[str] = []
 
         for ticker in instruments:
