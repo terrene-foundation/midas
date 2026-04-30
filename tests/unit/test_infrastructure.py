@@ -539,7 +539,7 @@ class TestExecutionAgent:
 
     @pytest.mark.asyncio
     async def test_handle_partial_fill(self, started_db):
-        """handle_partial_fill updates the order with partial fill info."""
+        """handle_partial_fill updates the order after IBKR acknowledgment."""
         from midas.execution.execution_agent import ExecutionAgent
 
         agent = ExecutionAgent(started_db)
@@ -547,6 +547,10 @@ class TestExecutionAgent:
         decision = {"instrument": "QQQ", "action": "SELL", "quantity": 100, "order_type": "LIMIT"}
         order = await agent.execute_decision(decision)
         order_id = order["order_id"]
+
+        # Advance through IBKR lifecycle: PENDING -> SUBMITTED_PENDING -> WORKING
+        await agent._order_manager.process_ibkr_status_update(order_id, "PendingSubmit")
+        await agent._order_manager.process_ibkr_status_update(order_id, "Submitted")
 
         fill_result = await agent.handle_partial_fill(
             order_id, {"fill_price": 400.0, "fill_quantity": 40}

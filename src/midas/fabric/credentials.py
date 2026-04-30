@@ -7,6 +7,8 @@ Token values are NEVER logged.
 Ref: T-13-01
 """
 
+import base64
+import logging
 import structlog
 from datetime import datetime, timezone
 from typing import Any
@@ -16,13 +18,29 @@ from dataflow import DataFlow
 
 logger = structlog.get_logger(__name__)
 
+# Weak key patterns — placeholder/default/test keys must not be silently accepted.
+_WEAK_KEY_PATTERNS = (b"example", b"changeme", b"test", b"placeholder", b"dummy")
+
+
+def _is_weak_key(key: bytes) -> bool:
+    """Return True if the decoded key material contains weak/placeholder patterns."""
+    try:
+        decoded = base64.urlsafe_b64decode(key)
+    except Exception:
+        return False
+    return any(pattern in decoded for pattern in _WEAK_KEY_PATTERNS)
+
 
 class CredentialStore:
     """Encrypted credential storage backed by DataFlow."""
 
     def __init__(self, db: DataFlow, fernet_key: str) -> None:
         self._db = db
-        self._fernet = Fernet(fernet_key.encode() if isinstance(fernet_key, str) else fernet_key)
+        key_bytes = fernet_key.encode() if isinstance(fernet_key, str) else fernet_key
+        if _is_weak_key(key_bytes):
+            logger.warning("credential.weak_key_detected", key_name="fernet_key")
+            logging.warning("Weak Fernet key detected — contains a placeholder pattern")
+        self._fernet = Fernet(key_bytes)
 
     def _encrypt(self, value: str) -> str:
         return self._fernet.encrypt(value.encode()).decode()

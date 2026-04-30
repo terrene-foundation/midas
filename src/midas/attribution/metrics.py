@@ -237,10 +237,11 @@ class RiskMetrics:
             # No tracking error — return bounded sentinel to avoid NaN/Inf in compliance checks.
             logger.warning(
                 "risk_metrics.information_ratio_infinite mean_active=%.6f te=%.6f",
-                mean_active, te,
+                mean_active,
+                te,
             )
             if mean_active == 0.0:
-                return 0.0
+                return _INF_SENTINEL
             return _INF_SENTINEL if mean_active > 0 else _NEG_INF_SENTINEL
 
         # Annualize both numerator and denominator consistently

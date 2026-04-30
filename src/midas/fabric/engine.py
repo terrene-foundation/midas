@@ -17,7 +17,7 @@ Ref: T-01-01
 import logging
 from typing import TYPE_CHECKING
 
-from dataflow import DataFlow
+from dataflow import DataFlow, DataFlowConfig
 
 from midas import config
 
@@ -600,16 +600,31 @@ def create_fabric(
     """
     url = "sqlite:///:memory:" if test_mode else (database_url or config.DATABASE_URL)
 
+    # Convert SQLAlchemy SQLite URL format to Rust dataflow format.
+    # SQLAlchemy:  sqlite:///relative   (3 slashes = relative path)
+    #              sqlite:////absolute  (4 slashes = absolute path)
+    #              sqlite:///:memory:   (special in-memory)
+    # Rust dataflow: sqlite::memory:  (in-memory)
+    #                sqlite:path?mode=rwc  (file, read-write-create)
+    if url.startswith("sqlite:///"):
+        if url == "sqlite:///:memory:":
+            url = "sqlite::memory:"
+        else:
+            path = url[len("sqlite:///") :]  # strip scheme + "///"
+            url = f"sqlite:{path}?mode=rwc"
+
     logger.info(
         "fabric.create_fabric",
         extra={
             "test_mode": test_mode,
             "auto_migrate": auto_migrate,
-            "database_type": "sqlite_memory" if test_mode else url.split("://")[0],
+            "database_type": "sqlite_memory" if test_mode else url.split(":")[0],
         },
     )
 
-    db = MidasFabric(url, auto_migrate=auto_migrate)
+    db = MidasFabric(
+        url, config=DataFlowConfig(database_url=url, auto_migrate=auto_migrate, test_mode=test_mode)
+    )
     _register_models(db)
 
     logger.info(
