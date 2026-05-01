@@ -17,7 +17,7 @@ Ref: T-01-01
 import logging
 from typing import TYPE_CHECKING, List, Dict, Any
 
-from dataflow import DataFlow, DataFlowConfig
+from dataflow import DataFlow, DataFlowConfig, FilterCondition
 
 from midas import config
 
@@ -42,25 +42,29 @@ class _DataFlowExpressAsync:
         self._inner = inner
 
     async def create(self, model_name: str, data: Dict) -> Dict:
-        return await self._inner.create(model_name, data)
+        return await self._inner.create_async(model_name, data)
 
     async def read(self, model_name: str, id: int | str) -> Dict:
-        return await self._inner.read(model_name, id)
+        return await self._inner.read_async(model_name, id)
 
     async def list(self, model_name: str, filter: Dict | None = None) -> List[Dict]:
-        return await self._inner.list(model_name, filter or {})
+        if not filter:
+            fc_list: List[FilterCondition] = []
+        else:
+            fc_list = [FilterCondition.eq(str(col), val) for col, val in filter.items()]
+        return await self._inner.list_async(model_name, fc_list)
 
     async def update(self, model_name: str, id: int | str, fields: Dict) -> Dict:
-        return await self._inner.update(model_name, id, fields)
+        return await self._inner.update_async(model_name, id, fields)
 
     async def delete(self, model_name: str, id: int | str) -> Dict:
-        return await self._inner.delete(model_name, id)
+        return await self._inner.delete_async(model_name, id)
 
     async def upsert(self, model_name: str, data: Dict) -> Dict:
-        return await self._inner.upsert(model_name, data)
+        return await self._inner.upsert_async(model_name, data)
 
     async def bulk_create(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return await self._inner.bulk_create(model_name, rows)
+        return await self._inner.bulk_create_async(model_name, rows)
 
     async def bulk_update(self, model_name: str, rows: List[Dict]) -> List[Dict]:
         return self._inner.bulk_update(model_name, rows)
@@ -72,7 +76,11 @@ class _DataFlowExpressAsync:
         return self._inner.bulk_upsert(model_name, rows)
 
     async def count(self, model_name: str, filter: Dict | None = None) -> int:
-        return await self._inner.count(model_name, filter=filter or {})
+        if not filter:
+            fc_list: List[FilterCondition] = []
+        else:
+            fc_list = [FilterCondition.eq(str(col), val) for col, val in filter.items()]
+        return await self._inner.count_async(model_name, fc_list)
 
     async def count_by(self, model_name: str, field: str, value: Any) -> int:
         return self._inner.count_by(model_name, field, value)
@@ -105,7 +113,7 @@ class MidasFabric(DataFlow):
     def express(self) -> _DataFlowExpressAsync:
         """Async express CRUD interface (create, read, list, update, delete, etc.)."""
         if self._express_async is None:
-            self._express_async = _DataFlowExpressAsync(super().express)
+            self._express_async = _DataFlowExpressAsync(self._inner.express)
         return self._express_async
 
     async def start(self) -> None:
@@ -671,12 +679,25 @@ def create_fabric(
     """
     url = "sqlite:///:memory:" if test_mode else (database_url or config.DATABASE_URL)
 
+    # Convert SQLAlchemy SQLite URL format to Rust dataflow format.
+    # SQLAlchemy:  sqlite:///relative   (3 slashes = relative path)
+    #              sqlite:////absolute  (4 slashes = absolute path)
+    #              sqlite:///:memory:   (special in-memory)
+    # Rust dataflow: sqlite::memory:  (in-memory)
+    #                sqlite:path?mode=rwc  (file, read-write-create)
+    if url.startswith("sqlite:///"):
+        if url == "sqlite:///:memory:":
+            url = "sqlite::memory:"
+        else:
+            path = url[len("sqlite:///") :]
+            url = f"sqlite:{path}?mode=rwc"
+
     logger.info(
         "fabric.create_fabric",
         extra={
             "test_mode": test_mode,
             "auto_migrate": auto_migrate,
-            "database_type": "sqlite_memory" if test_mode else url.split("://")[0],
+            "database_type": "sqlite_memory" if test_mode else url.split(":")[0],
         },
     )
 
