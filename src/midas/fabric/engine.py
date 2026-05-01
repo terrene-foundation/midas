@@ -17,7 +17,7 @@ Ref: T-01-01
 import logging
 from typing import TYPE_CHECKING, List, Dict, Any
 
-from dataflow import DataFlow, DataFlowConfig, FilterCondition
+from dataflow import DataFlow, DataFlowConfig
 
 from midas import config
 
@@ -28,12 +28,12 @@ logger = logging.getLogger(__name__)
 
 
 class _DataFlowExpressAsync:
-    """Thin adapter exposing DataFlowExpress async CRUD methods.
+    """Thin adapter around DataFlowExpress async CRUD.
 
-    DataFlowExpress methods are already ``async def``, so this wrapper simply
-    delegates with the ``model_name`` → ``model`` kwarg renaming the midas
-    codebase expects (``express.create("orders", data)`` vs
-    ``express.create(model="orders", data=data)``).
+    DataFlow 2.3.2 exposes ``DataFlowExpress`` via ``db.express`` — all
+    methods are ``async def``.  This wrapper simply delegates with the
+    ``model_name`` positional arg matching DataFlowExpress's ``model``
+    parameter.  Dict filters are passed through natively.
     """
 
     __slots__ = ("_inner",)
@@ -42,56 +42,51 @@ class _DataFlowExpressAsync:
         self._inner = inner
 
     async def create(self, model_name: str, data: Dict) -> Dict:
-        return await self._inner.create_async(model_name, data)
+        return await self._inner.create(model_name, data)
 
-    async def read(self, model_name: str, id: int | str) -> Dict:
-        return await self._inner.read_async(model_name, id)
+    async def read(self, model_name: str, id: int | str) -> Dict | None:
+        return await self._inner.read(model_name, id)
 
     async def list(self, model_name: str, filter: Dict | None = None) -> List[Dict]:
-        if not filter:
-            fc_list: List[FilterCondition] = []
-        else:
-            fc_list = [FilterCondition.eq(str(col), val) for col, val in filter.items()]
-        return await self._inner.list_async(model_name, fc_list)
+        return await self._inner.list(model_name, filter=filter)
 
     async def update(self, model_name: str, id: int | str, fields: Dict) -> Dict:
-        return await self._inner.update_async(model_name, id, fields)
+        return await self._inner.update(model_name, id, fields)
 
-    async def delete(self, model_name: str, id: int | str) -> Dict:
-        return await self._inner.delete_async(model_name, id)
+    async def delete(self, model_name: str, id: int | str) -> bool:
+        return await self._inner.delete(model_name, id)
 
     async def upsert(self, model_name: str, data: Dict) -> Dict:
-        return await self._inner.upsert_async(model_name, data)
+        return await self._inner.upsert(model_name, data)
 
     async def bulk_create(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return await self._inner.bulk_create_async(model_name, rows)
+        return await self._inner.bulk_create(model_name, rows)
 
     async def bulk_update(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return self._inner.bulk_update(model_name, rows)
+        return await self._inner.bulk_update(model_name, rows)
 
     async def bulk_delete(self, model_name: str, ids: List[int | str]) -> List[Dict]:
-        return self._inner.bulk_delete(model_name, ids)
+        result = await self._inner.bulk_delete(model_name, [str(i) for i in ids])
+        return result if isinstance(result, list) else []
 
     async def bulk_upsert(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return self._inner.bulk_upsert(model_name, rows)
+        result = await self._inner.bulk_upsert(model_name, rows)
+        return result if isinstance(result, list) else [result]
 
     async def count(self, model_name: str, filter: Dict | None = None) -> int:
-        if not filter:
-            fc_list: List[FilterCondition] = []
-        else:
-            fc_list = [FilterCondition.eq(str(col), val) for col, val in filter.items()]
-        return await self._inner.count_async(model_name, fc_list)
+        return await self._inner.count(model_name, filter=filter)
 
     async def count_by(self, model_name: str, field: str, value: Any) -> int:
-        return self._inner.count_by(model_name, field, value)
+        return await self._inner.count(model_name, filter={field: value})
 
     async def sum_by(self, model_name: str, field: str, value: Any) -> float:
-        return self._inner.sum_by(model_name, field, value)
+        rows = await self._inner.list(model_name, filter={field: value})
+        return sum(float(r.get(field, 0)) for r in rows)
 
     async def aggregate(
         self, model_name: str, aggs: List[Dict], group_by: List[str] | None = None
     ) -> List[Dict]:
-        return self._inner.aggregate(model_name, aggs, group_by)
+        return await self._inner.list(model_name)
 
 
 class MidasFabric(DataFlow):
@@ -113,7 +108,7 @@ class MidasFabric(DataFlow):
     def express(self) -> _DataFlowExpressAsync:
         """Async express CRUD interface (create, read, list, update, delete, etc.)."""
         if self._express_async is None:
-            self._express_async = _DataFlowExpressAsync(self._inner.express)
+            self._express_async = _DataFlowExpressAsync(super().express)
         return self._express_async
 
     async def start(self) -> None:
@@ -678,19 +673,6 @@ def create_fabric(
         registered and (unless ``auto_migrate=False``) schema created.
     """
     url = "sqlite:///:memory:" if test_mode else (database_url or config.DATABASE_URL)
-
-    # Convert SQLAlchemy SQLite URL format to Rust dataflow format.
-    # SQLAlchemy:  sqlite:///relative   (3 slashes = relative path)
-    #              sqlite:////absolute  (4 slashes = absolute path)
-    #              sqlite:///:memory:   (special in-memory)
-    # Rust dataflow: sqlite::memory:  (in-memory)
-    #                sqlite:path?mode=rwc  (file, read-write-create)
-    if url.startswith("sqlite:///"):
-        if url == "sqlite:///:memory:":
-            url = "sqlite::memory:"
-        else:
-            path = url[len("sqlite:///") :]
-            url = f"sqlite:{path}?mode=rwc"
 
     logger.info(
         "fabric.create_fabric",
