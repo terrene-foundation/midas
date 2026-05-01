@@ -48,7 +48,7 @@ class _DataFlowExpressAsync:
         return await self._inner.read(model_name, id)
 
     async def list(self, model_name: str, filter: Dict | None = None) -> List[Dict]:
-        return await self._inner.list(model_name, filter=filter or {})
+        return await self._inner.list(model_name, filter or {})
 
     async def update(self, model_name: str, id: int | str, fields: Dict) -> Dict:
         return await self._inner.update(model_name, id, fields)
@@ -63,27 +63,27 @@ class _DataFlowExpressAsync:
         return await self._inner.bulk_create(model_name, rows)
 
     async def bulk_update(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return await self._inner.bulk_update(model_name, rows)
+        return self._inner.bulk_update(model_name, rows)
 
     async def bulk_delete(self, model_name: str, ids: List[int | str]) -> List[Dict]:
-        return await self._inner.bulk_delete(model_name, ids)
+        return self._inner.bulk_delete(model_name, ids)
 
     async def bulk_upsert(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return await self._inner.bulk_upsert(model_name, rows)
+        return self._inner.bulk_upsert(model_name, rows)
 
     async def count(self, model_name: str, filter: Dict | None = None) -> int:
         return await self._inner.count(model_name, filter=filter or {})
 
     async def count_by(self, model_name: str, field: str, value: Any) -> int:
-        return await self._inner.count_by(model_name, field, value)
+        return self._inner.count_by(model_name, field, value)
 
     async def sum_by(self, model_name: str, field: str, value: Any) -> float:
-        return await self._inner.sum_by(model_name, field, value)
+        return self._inner.sum_by(model_name, field, value)
 
     async def aggregate(
         self, model_name: str, aggs: List[Dict], group_by: List[str] | None = None
     ) -> List[Dict]:
-        return await self._inner.aggregate(model_name, aggs, group_by)
+        return self._inner.aggregate(model_name, aggs, group_by)
 
 
 class MidasFabric(DataFlow):
@@ -105,7 +105,7 @@ class MidasFabric(DataFlow):
     def express(self) -> _DataFlowExpressAsync:
         """Async express CRUD interface (create, read, list, update, delete, etc.)."""
         if self._express_async is None:
-            self._express_async = _DataFlowExpressAsync(DataFlow.express.fget(self))
+            self._express_async = _DataFlowExpressAsync(super().express)
         return self._express_async
 
     async def start(self) -> None:
@@ -671,25 +671,12 @@ def create_fabric(
     """
     url = "sqlite:///:memory:" if test_mode else (database_url or config.DATABASE_URL)
 
-    # Convert SQLAlchemy SQLite URL format to Rust dataflow format.
-    # SQLAlchemy:  sqlite:///relative   (3 slashes = relative path)
-    #              sqlite:////absolute  (4 slashes = absolute path)
-    #              sqlite:///:memory:   (special in-memory)
-    # Rust dataflow: sqlite::memory:  (in-memory)
-    #                sqlite:path?mode=rwc  (file, read-write-create)
-    if url.startswith("sqlite:///"):
-        if url == "sqlite:///:memory:":
-            url = "sqlite::memory:"
-        else:
-            path = url[len("sqlite:///") :]  # strip scheme + "///"
-            url = f"sqlite:{path}?mode=rwc"
-
     logger.info(
         "fabric.create_fabric",
         extra={
             "test_mode": test_mode,
             "auto_migrate": auto_migrate,
-            "database_type": "sqlite_memory" if test_mode else url.split(":")[0],
+            "database_type": "sqlite_memory" if test_mode else url.split("://")[0],
         },
     )
 
