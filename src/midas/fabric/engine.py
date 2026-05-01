@@ -17,7 +17,7 @@ Ref: T-01-01
 import logging
 from typing import TYPE_CHECKING, List, Dict, Any
 
-from dataflow import DataFlow, DataFlowConfig
+from dataflow import DataFlow, DataFlowConfig, FilterCondition
 
 from midas import config
 
@@ -42,48 +42,58 @@ class _DataFlowExpressAsync:
         self._inner = inner
 
     async def create(self, model_name: str, data: Dict) -> Dict:
-        return await self._inner.create(model_name, data)
+        return await self._inner.create_async(model_name, data)
 
     async def read(self, model_name: str, id: int | str) -> Dict:
-        return await self._inner.read(model_name, id)
+        return await self._inner.read_async(model_name, id)
 
     async def list(self, model_name: str, filter: Dict | None = None) -> List[Dict]:
-        return await self._inner.list(model_name, filter=filter or {})
+        # Empty dict or None → no filters
+        if not filter:
+            return await self._inner.list_async(model_name, [])
+        # Convert dict {"col": "value"} → [FilterCondition("col", "eq", "value")]
+        conditions = [FilterCondition(str(col), "eq", val) for col, val in filter.items()]
+        return await self._inner.list_async(model_name, conditions)
 
     async def update(self, model_name: str, id: int | str, fields: Dict) -> Dict:
-        return await self._inner.update(model_name, id, fields)
+        return await self._inner.update_async(model_name, id, fields)
 
     async def delete(self, model_name: str, id: int | str) -> Dict:
-        return await self._inner.delete(model_name, id)
+        return await self._inner.delete_async(model_name, id)
 
     async def upsert(self, model_name: str, data: Dict) -> Dict:
-        return await self._inner.upsert(model_name, data)
+        return await self._inner.upsert_async(model_name, data)
 
     async def bulk_create(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return await self._inner.bulk_create(model_name, rows)
+        return await self._inner.bulk_create_async(model_name, rows)
 
     async def bulk_update(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return await self._inner.bulk_update(model_name, rows)
+        return await self._inner.bulk_update_async(model_name, rows)
 
     async def bulk_delete(self, model_name: str, ids: List[int | str]) -> List[Dict]:
-        return await self._inner.bulk_delete(model_name, ids)
+        return await self._inner.bulk_delete_async(model_name, ids)
 
     async def bulk_upsert(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return await self._inner.bulk_upsert(model_name, rows)
+        return await self._inner.bulk_upsert_async(model_name, rows)
 
     async def count(self, model_name: str, filter: Dict | None = None) -> int:
-        return await self._inner.count(model_name, filter=filter or {})
+        if not filter:
+            return self._inner.count(model_name)
+        conditions = [FilterCondition(str(col), "eq", val) for col, val in filter.items()]
+        return self._inner.count(model_name, filters=conditions)
 
     async def count_by(self, model_name: str, field: str, value: Any) -> int:
-        return await self._inner.count_by(model_name, field, value)
+        conditions = [FilterCondition(str(field), "eq", value)]
+        return self._inner.count_by(model_name, field, filters=conditions)
 
     async def sum_by(self, model_name: str, field: str, value: Any) -> float:
-        return await self._inner.sum_by(model_name, field, value)
+        conditions = [FilterCondition(str(field), "eq", value)]
+        return self._inner.sum_by(model_name, field, filters=conditions)
 
     async def aggregate(
         self, model_name: str, aggs: List[Dict], group_by: List[str] | None = None
     ) -> List[Dict]:
-        return await self._inner.aggregate(model_name, aggs, group_by)
+        return self._inner.aggregate(model_name, aggs, group_by)
 
 
 class MidasFabric(DataFlow):
@@ -105,7 +115,7 @@ class MidasFabric(DataFlow):
     def express(self) -> _DataFlowExpressAsync:
         """Async express CRUD interface (create, read, list, update, delete, etc.)."""
         if self._express_async is None:
-            self._express_async = _DataFlowExpressAsync(DataFlow.express.fget(self))
+            self._express_async = _DataFlowExpressAsync(self._inner.express)
         return self._express_async
 
     async def start(self) -> None:

@@ -1210,6 +1210,11 @@ class IBKRAdapter(BaseAdapter):
         operation = "get_sweep_history"
         self._log.info("get_sweep_history.start", account_id=account_id)
 
+        # No DB configured — return empty gracefully instead of trying to connect
+        if self._db is None:
+            self._log.info("get_sweep_history.no_db", account_id=account_id)
+            return []
+
         db = self._get_db()
 
         try:
