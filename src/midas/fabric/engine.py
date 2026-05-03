@@ -31,62 +31,62 @@ class _DataFlowExpressAsync:
     """Thin adapter around DataFlowExpress async CRUD.
 
     DataFlow 2.3.2 exposes ``DataFlowExpress`` via ``db.express`` — all
-    methods are ``async def``.  This wrapper simply delegates with the
+    methods are ``async def``.  This wrapper delegates with the
     ``model_name`` positional arg matching DataFlowExpress's ``model``
-    parameter.  Dict filters are passed through natively.
-    """
+    parameter.  Methods are plain ``def`` (not ``async def``) so they can
+    be replaced at the instance level by tests that mock CRUD calls.
 
-    __slots__ = ("_inner",)
+    Callers still ``await`` each result — ``def`` returning an
+    ``ExpressDataFlow`` coroutine is indistinguishable from ``async def``.
+    """
 
     def __init__(self, inner):
         self._inner = inner
 
-    async def create(self, model_name: str, data: Dict) -> Dict:
-        return await self._inner.create(model_name, data)
+    def create(self, model_name: str, data: Dict):
+        return self._inner.create(model_name, data)
 
-    async def read(self, model_name: str, id: int | str) -> Dict | None:
-        return await self._inner.read(model_name, id)
+    def read(self, model_name: str, id: int | str):
+        return self._inner.read(model_name, id)
 
-    async def list(self, model_name: str, filter: Dict | None = None) -> List[Dict]:
-        return await self._inner.list(model_name, filter=filter)
+    def list(self, model_name: str, filter: Dict | None = None):
+        return self._inner.list(model_name, filter=filter)
 
-    async def update(self, model_name: str, id: int | str, fields: Dict) -> Dict:
-        return await self._inner.update(model_name, id, fields)
+    def update(self, model_name: str, id: int | str, fields: Dict):
+        return self._inner.update(model_name, id, fields)
 
-    async def delete(self, model_name: str, id: int | str) -> bool:
-        return await self._inner.delete(model_name, id)
+    def delete(self, model_name: str, id: int | str):
+        return self._inner.delete(model_name, id)
 
-    async def upsert(self, model_name: str, data: Dict) -> Dict:
-        return await self._inner.upsert(model_name, data)
+    def upsert(self, model_name: str, data: Dict):
+        return self._inner.upsert(model_name, data)
 
-    async def bulk_create(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return await self._inner.bulk_create(model_name, rows)
+    def bulk_create(self, model_name: str, rows: List[Dict]):
+        return self._inner.bulk_create(model_name, rows)
 
-    async def bulk_update(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        return await self._inner.bulk_update(model_name, rows)
+    def bulk_update(self, model_name: str, rows: List[Dict]):
+        return self._inner.bulk_update(model_name, rows)
 
-    async def bulk_delete(self, model_name: str, ids: List[int | str]) -> List[Dict]:
-        result = await self._inner.bulk_delete(model_name, [str(i) for i in ids])
+    def bulk_delete(self, model_name: str, ids: List[int | str]):
+        result = self._inner.bulk_delete(model_name, [str(i) for i in ids])
         return result if isinstance(result, list) else []
 
-    async def bulk_upsert(self, model_name: str, rows: List[Dict]) -> List[Dict]:
-        result = await self._inner.bulk_upsert(model_name, rows)
+    def bulk_upsert(self, model_name: str, rows: List[Dict]):
+        result = self._inner.bulk_upsert(model_name, rows)
         return result if isinstance(result, list) else [result]
 
-    async def count(self, model_name: str, filter: Dict | None = None) -> int:
-        return await self._inner.count(model_name, filter=filter)
+    def count(self, model_name: str, filter: Dict | None = None):
+        return self._inner.count(model_name, filter=filter)
 
-    async def count_by(self, model_name: str, field: str, value: Any) -> int:
-        return await self._inner.count(model_name, filter={field: value})
+    def count_by(self, model_name: str, field: str, value: Any):
+        return self._inner.count(model_name, filter={field: value})
 
-    async def sum_by(self, model_name: str, field: str, value: Any) -> float:
-        rows = await self._inner.list(model_name, filter={field: value})
+    def sum_by(self, model_name: str, field: str, value: Any):
+        rows = self._inner.list(model_name, filter={field: value})
         return sum(float(r.get(field, 0)) for r in rows)
 
-    async def aggregate(
-        self, model_name: str, aggs: List[Dict], group_by: List[str] | None = None
-    ) -> List[Dict]:
-        return await self._inner.list(model_name)
+    def aggregate(self, model_name: str, aggs: List[Dict], group_by: List[str] | None = None):
+        return self._inner.list(model_name)
 
 
 class MidasFabric(DataFlow):
