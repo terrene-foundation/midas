@@ -43,40 +43,40 @@ class _DataFlowExpressAsync:
     def __init__(self, inner):
         self._inner = inner
 
-    def create(self, model_name: str, data: Dict):
-        return self._inner.create(model_name, data)
+    def create(self, model_name: str, data: Dict, **kwargs):
+        return self._inner.create(model_name, data, **kwargs)
 
-    def read(self, model_name: str, id: int | str):
-        return self._inner.read(model_name, id)
+    def read(self, model_name: str, id: int | str, **kwargs):
+        return self._inner.read(model_name, id, **kwargs)
 
-    def list(self, model_name: str, filter: Dict | None = None):
-        return self._inner.list(model_name, filter=filter)
+    def list(self, model_name: str, filter: Dict | None = None, **kwargs):
+        return self._inner.list(model_name, filter=filter, **kwargs)
 
-    def update(self, model_name: str, id: int | str, fields: Dict):
-        return self._inner.update(model_name, id, fields)
+    def update(self, model_name: str, id: int | str, fields: Dict, **kwargs):
+        return self._inner.update(model_name, id, fields, **kwargs)
 
-    def delete(self, model_name: str, id: int | str):
-        return self._inner.delete(model_name, id)
+    def delete(self, model_name: str, id: int | str, **kwargs):
+        return self._inner.delete(model_name, id, **kwargs)
 
-    def upsert(self, model_name: str, data: Dict):
-        return self._inner.upsert(model_name, data)
+    def upsert(self, model_name: str, data: Dict, **kwargs):
+        return self._inner.upsert(model_name, data, **kwargs)
 
-    def bulk_create(self, model_name: str, rows: List[Dict]):
-        return self._inner.bulk_create(model_name, rows)
+    def bulk_create(self, model_name: str, rows: List[Dict], **kwargs):
+        return self._inner.bulk_create(model_name, rows, **kwargs)
 
-    def bulk_update(self, model_name: str, rows: List[Dict]):
-        return self._inner.bulk_update(model_name, rows)
+    def bulk_update(self, model_name: str, rows: List[Dict], **kwargs):
+        return self._inner.bulk_update(model_name, rows, **kwargs)
 
-    def bulk_delete(self, model_name: str, ids: List[int | str]):
-        result = self._inner.bulk_delete(model_name, [str(i) for i in ids])
+    def bulk_delete(self, model_name: str, ids: List[int | str], **kwargs):
+        result = self._inner.bulk_delete(model_name, [str(i) for i in ids], **kwargs)
         return result if isinstance(result, list) else []
 
-    def bulk_upsert(self, model_name: str, rows: List[Dict]):
-        result = self._inner.bulk_upsert(model_name, rows)
+    def bulk_upsert(self, model_name: str, rows: List[Dict], **kwargs):
+        result = self._inner.bulk_upsert(model_name, rows, **kwargs)
         return result if isinstance(result, list) else [result]
 
-    def count(self, model_name: str, filter: Dict | None = None):
-        return self._inner.count(model_name, filter=filter)
+    def count(self, model_name: str, filter: Dict | None = None, **kwargs):
+        return self._inner.count(model_name, filter=filter, **kwargs)
 
     def count_by(self, model_name: str, field: str, value: Any):
         return self._inner.count(model_name, filter={field: value})
