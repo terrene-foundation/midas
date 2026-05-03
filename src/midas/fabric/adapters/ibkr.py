@@ -192,13 +192,19 @@ class IBKRAdapter(BaseAdapter):
     ) -> Any:
         """Add a request to the appropriate priority queue and wait for it."""
         event = asyncio.Event()
+        # Use object.__setattr__ to attach result storage to the Event (which is frozen)
+        object.__setattr__(event, "_result", None)
         queue = self._priority_queues[priority]
         await queue.put((priority.value, operation, fn, args, kwargs, event))
         # Start drain worker if not running
         if self._drain_task is None or self._drain_task.done():
             self._drain_task = asyncio.create_task(self._drain_queue())
-        # Wait for result
+        # Wait for result and re-raise if an exception was stored
         await event.wait()
+        result = object.__getattribute__(event, "_result")
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     async def _drain_queue(self) -> None:
         """Drain the highest-priority non-empty queue continuously."""
@@ -221,10 +227,11 @@ class IBKRAdapter(BaseAdapter):
             try:
                 await self._enforce_rate_limit()
                 result = await fn(*args, **kwargs)
+                object.__setattr__(event, "_result", result)
                 event.set()
             except Exception as exc:
                 # Store exception and set event so caller sees it
-                result = exc
+                object.__setattr__(event, "_result", exc)
                 event.set()
             finally:
                 if not queue.empty():
@@ -1378,29 +1385,51 @@ class TWSTFallbackAdapter(BaseAdapter):
     # Lazy IB connection
     # ------------------------------------------------------------------
 
-    def _get_ib(self) -> ib_async.IB:  # type: ignore[valid-type]
-        """Return the ib_async connection, connecting lazily if needed."""
+    def _connect_ib_sync(self) -> None:
+        """Establish the ib_async connection synchronously (blocking).
+
+        Must be called from a thread (via asyncio.to_thread) in async contexts,
+        or directly in sync contexts.
+        """
         if ib_async is None:
             raise AdapterError(
                 self.SOURCE_NAME,
                 "connect",
                 "ib_async not installed — install with: pip install ib_async",
             )
-
-        if self._ib is None:
-            self._ib = ib_async.IB()
-            self._ib.connect(
-                self._host,
-                self._port,
-                clientId=self._client_id,
+        self._ib = ib_async.IB()
+        self._ib.connect(self._host, self._port, clientId=self._client_id)
+        accounts = self._ib.accountData()
+        if accounts:
+            self._connected_account = (
+                self._account_id if self._account_id in accounts else accounts[0]
             )
-            # Resolve account
-            accounts = self._ib.accountData()
-            if accounts:
-                self._connected_account = (
-                    self._account_id if self._account_id in accounts else accounts[0]
-                )
 
+    def _get_ib(self) -> ib_async.IB:  # type: ignore[valid-type]
+        """Return the ib_async connection, connecting lazily if needed.
+
+        In async contexts, use ``await _ensure_ib_async()`` instead.
+        """
+        if ib_async is None:
+            raise AdapterError(
+                self.SOURCE_NAME,
+                "connect",
+                "ib_async not installed — install with: pip install ib_async",
+            )
+        if self._ib is None:
+            self._connect_ib_sync()
+        return self._ib
+
+    async def _ensure_ib_async(self) -> ib_async.IB:  # type: ignore[valid-type]
+        """Return the ib_async connection, establishing it off the event loop if needed."""
+        if ib_async is None:
+            raise AdapterError(
+                self.SOURCE_NAME,
+                "connect",
+                "ib_async not installed — install with: pip install ib_async",
+            )
+        if self._ib is None:
+            await asyncio.to_thread(self._connect_ib_sync)
         return self._ib
 
     async def close(self) -> None:
@@ -1424,7 +1453,7 @@ class TWSTFallbackAdapter(BaseAdapter):
             }
 
         try:
-            ib = self._get_ib()
+            ib = await self._ensure_ib_async()
             if not ib.isConnected():
                 return {
                     "source": self.SOURCE_NAME,
@@ -1459,7 +1488,7 @@ class TWSTFallbackAdapter(BaseAdapter):
         self._log.info("fetch_quote.start", ticker=ticker)
 
         try:
-            ib = self._get_ib()
+            ib = await self._ensure_ib_async()
             contract = ib_async.Stock(ticker, "SMART", "USD")
             ib.reqMktData(contract, "", False, False)
             # Wait briefly for the tick
@@ -1512,7 +1541,7 @@ class TWSTFallbackAdapter(BaseAdapter):
         self._log.info("fetch_positions.start", account_id=account_id)
 
         try:
-            ib = self._get_ib()
+            ib = await self._ensure_ib_async()
             acct = account_id or self._connected_account or ""
             ib.reqAccountUpdates(acct)
             await asyncio.sleep(1.5)  # TWS delivers updates asynchronously
@@ -1597,7 +1626,7 @@ class TWSTFallbackAdapter(BaseAdapter):
         self._log.info("fetch_account_balance.start", account_id=account_id)
 
         try:
-            ib = self._get_ib()
+            ib = await self._ensure_ib_async()
             acct = account_id or self._connected_account or ""
             ib.reqAccountUpdates(acct)
             await asyncio.sleep(1.5)
@@ -1654,7 +1683,7 @@ class TWSTFallbackAdapter(BaseAdapter):
         self._log.info("fetch_order_status.start", account_id=account_id)
 
         try:
-            ib = self._get_ib()
+            ib = await self._ensure_ib_async()
             open_orders = ib.openOrders()
         except Exception as exc:
             self._log.error(

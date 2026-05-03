@@ -481,7 +481,12 @@ class TestTWSTFallbackAdapterOrderStateWiring:
             def openOrders(self):
                 return [FakeOrder()]
 
-        adapter._get_ib = lambda: FakeIB()
+        fake_ib = FakeIB()
+        adapter._get_ib = lambda: fake_ib
+        # _ensure_ib_async is async — use AsyncMock so `await _ensure_ib_async()` returns fake_ib
+        from unittest.mock import AsyncMock
+
+        adapter._ensure_ib_async = AsyncMock(return_value=fake_ib)
 
         # Patch structlog on the adapter
         import structlog

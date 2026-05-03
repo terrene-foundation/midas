@@ -168,12 +168,24 @@ def create_app(
                 raise HTTPException(status_code=401, detail="Invalid or missing API key")
             return await call_next(request)
 
-        # No auth configured (dev mode)
+        # No auth configured (dev mode — requires explicit DEV_MODE=true)
+        dev_mode = os.environ.get("DEV_MODE", "").lower() == "true"
+        if dev_mode:
+            logger.warning(
+                "auth.dev_mode_enabled",
+                extra={
+                    "path": path,
+                    "note": "DEV_MODE=true: all endpoints accessible without authentication",
+                },
+            )
+            return await call_next(request)
         logger.warning(
-            "auth.dev_mode_no_auth",
-            extra={"path": path, "note": "All endpoints accessible without authentication"},
+            "auth.unauthorized.no_credentials",
+            extra={"path": path, "note": "No JWT_SECRET, no DEV_MODE=true — rejecting request"},
         )
-        return await call_next(request)
+        raise HTTPException(
+            status_code=401, detail="Authentication required: set JWT_SECRET or DEV_MODE=true"
+        )
 
     # Mount all routers
     health = HealthRouter()

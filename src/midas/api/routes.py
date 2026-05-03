@@ -752,7 +752,7 @@ class DebateRouter:
         tools = await self._get_debate_tools()
         if tools is None:
             # Return empty result when DB is unavailable (e.g., test environment)
-            logger.warning("debate.invoke_tool.db_unavailable", tool_name=tool_name)
+            logger.warning("debate.invoke_tool.db_unavailable", extra={"tool_name": tool_name})
             return {"tool_result": {}, "thread_id": thread_id}
 
         # Map tool_name -> (method, param_keys)
@@ -784,6 +784,12 @@ class DebateRouter:
             return {"tool_result": result, "thread_id": thread_id}
         except HTTPException:
             raise
+        except TypeError as exc:
+            logger.warning(
+                "debate.invoke_tool.type_error",
+                extra={"thread_id": thread_id, "tool_name": tool_name, "error": str(exc)},
+            )
+            raise HTTPException(status_code=400, detail=f"Invalid parameter: {exc}")
         except Exception as exc:
             logger.error(
                 "debate.invoke_tool.failed",
@@ -1336,6 +1342,8 @@ class SettingsRouter:
         confirmation_code = body.get("confirmation_code", "")
         user_approved = body.get("user_approved", False)
         state_brief = body.get("state_brief") or {}
+        if not isinstance(state_brief, dict):
+            raise HTTPException(status_code=400, detail="state_brief must be a dict")
         # Provide a default brief if none supplied (required by process lock)
         if not state_brief.get("z_t_posterior") and not state_brief.get("drawdown_state"):
             state_brief = {
@@ -1362,7 +1370,7 @@ class SettingsRouter:
             )
             if not result.get("cleared", False):
                 raise HTTPException(status_code=403, detail="Kill switch clear rejected")
-            logger.info("kill_switch.cleared", revert_level=result.get("revert_level"))
+            logger.info("kill_switch.cleared", extra={"revert_level": result.get("revert_level")})
             return {
                 "status": "cleared",
                 "revert_level": result.get("revert_level"),
@@ -1510,7 +1518,7 @@ class ComplianceRouter:
                     "updated_at": now,
                 },
             )
-            logger.info("compliance.rule_created", rule_id=body["rule_id"])
+            logger.info("compliance.rule_created", extra={"rule_id": body["rule_id"]})
             return {
                 "id": rule_id,
                 "rule_id": body["rule_id"],
@@ -1609,7 +1617,7 @@ class ComplianceRouter:
                     updates[field] = val
 
             await db.express.update("compliance_rules", str(existing["id"]), updates)
-            logger.info("compliance.rule_updated", rule_id=rule_id)
+            logger.info("compliance.rule_updated", extra={"rule_id": rule_id})
             return {"rule_id": rule_id, "status": "updated"}
         except HTTPException:
             raise
@@ -1727,7 +1735,7 @@ class BriefsRouter:
                     "updated_at": now,
                 },
             )
-            logger.info("briefs.created", brief_id=str(row.get("id", "")))
+            logger.info("briefs.created", extra={"brief_id": str(row.get("id", ""))})
             return {
                 "id": str(row.get("id", "")),
                 "title": body["title"],
@@ -1820,7 +1828,9 @@ class BriefsRouter:
             }
 
             await db.express.update("briefs", brief_id, updates)
-            logger.info("briefs.updated", brief_id=brief_id, new_version=current_version + 1)
+            logger.info(
+                "briefs.updated", extra={"brief_id": brief_id, "new_version": current_version + 1}
+            )
 
             # Return the updated brief
             updated = await db.express.read("briefs", brief_id)

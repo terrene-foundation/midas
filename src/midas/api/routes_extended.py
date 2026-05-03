@@ -1167,9 +1167,11 @@ class PaperLiveRouter:
 
         logger.info(
             "paper_live.acknowledge.ok",
-            user_id=user_id,
-            acknowledged=acknowledged,
-            acknowledged_at=now.isoformat() if acknowledged else "",
+            extra={
+                "user_id": user_id,
+                "acknowledged": acknowledged,
+                "acknowledged_at": now.isoformat() if acknowledged else "",
+            },
         )
         return {
             "acknowledged": acknowledged,

@@ -47,6 +47,7 @@ def client():
     old_pytest_test = os.environ.pop("PYTEST_CURRENT_TEST", None)
     old_db_url = os.environ.get("DATABASE_URL", "")
     os.environ["DATABASE_URL"] = _get_test_db_url()
+    os.environ["DEV_MODE"] = "true"  # auth accepts requests without JWT_SECRET in tests
 
     import midas.config as config_module
 
@@ -69,6 +70,7 @@ def client():
 # ---------------------------------------------------------------------------
 # Debate tool validation
 # ---------------------------------------------------------------------------
+
 
 class TestDebateToolNameValidation:
     """DebateToolName enum: unknown tool names must be rejected."""
@@ -131,6 +133,7 @@ class TestInvokeToolBodyFieldTypes:
 # Backtest body validation
 # ---------------------------------------------------------------------------
 
+
 class TestRunBacktestBodyValidation:
     """RunBacktestBody: max_length enforcement on instruments and scenario_name."""
 
@@ -169,6 +172,7 @@ class TestRunBacktestBodyValidation:
 # ---------------------------------------------------------------------------
 # Clear kill switch body validation
 # ---------------------------------------------------------------------------
+
 
 class TestClearKillSwitchBodyValidation:
     """ClearKillSwitchBody: user_approved is bool, state_brief is dict."""
@@ -258,6 +262,7 @@ class TestClearKillSwitchBodyValidation:
 # ---------------------------------------------------------------------------
 # Compliance rule validation
 # ---------------------------------------------------------------------------
+
 
 class TestCreateRuleBodyValidation:
     """CreateRuleBody: required fields, valid categories and severities."""

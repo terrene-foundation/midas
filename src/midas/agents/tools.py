@@ -57,6 +57,8 @@ class DebateTools:
         if table not in self.FABRIC_ALLOWLIST:
             logger.warning("tools.query_fabric.blocked", table=table)
             return [{"error": f"Table '{table}' is not accessible via debate tools"}]
+        if not isinstance(filter, dict):
+            raise TypeError(f"filter must be a dict, got {type(filter).__name__}")
         logger.info("tools.query_fabric", table=table, filter_keys=list(filter.keys()))
         try:
             rows = await self._db.express.list(table, filter=filter)
