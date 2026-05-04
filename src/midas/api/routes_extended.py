@@ -571,6 +571,8 @@ class NotificationRouter:
 class BacktestDetailRouter:
     """Backtest detail sub-endpoints for scorecard, regime, consistency, cost.
 
+    Delegates computation to BacktestEngine for formula consistency.
+
     Ref: T-23-07, specs/09 S9.2
     """
 
@@ -598,151 +600,57 @@ class BacktestDetailRouter:
         except Exception:
             return []
 
-    def _compute_metrics(self, returns: list[float]) -> dict[str, float]:
-        """Compute CAGR, Sharpe, max_drawdown, calmar, turnover, win_rate."""
-        import numpy as np
+    async def _run_engine(self, db, run_id: str) -> dict[str, Any]:
+        """Build and run BacktestEngine for the given run."""
+        import pandas as pd
 
-        if not returns:
-            return {
-                "cagr": 0.0,
-                "sharpe": 0.0,
-                "max_drawdown": 0.0,
-                "calmar": 0.0,
-                "turnover": 0.0,
-                "win_rate": 0.0,
-            }
+        from midas.backtest.engine import BacktestEngine
 
-        rets = np.array(returns)
-        n = len(returns)
+        decisions = await self._get_decisions_for_run(db, run_id)
 
-        # CAGR
-        total_return = float(np.prod(1 + rets))
-        years = n / 252.0
-        cagr = (total_return ** (1 / years) - 1) if years > 0 and total_return > 0 else 0.0
+        prices_rows = []
+        try:
+            prices_rows = await db.express.list("prices")
+            if isinstance(prices_rows, dict):
+                prices_rows = [prices_rows]
+        except Exception:
+            pass
 
-        # Sharpe
-        std_ret = float(np.std(rets, ddof=1)) if len(rets) > 1 else 0.0
-        mean_ret = float(np.mean(rets))
-        sharpe = (mean_ret / std_ret * np.sqrt(252)) if std_ret > 1e-10 else 0.0
-
-        # Max drawdown
-        cumulative = np.cumprod(1 + rets)
-        running_max = np.maximum.accumulate(cumulative)
-        drawdown = (cumulative - running_max) / np.maximum(running_max, 1e-10)
-        max_drawdown = abs(float(np.min(drawdown))) if len(drawdown) > 0 else 0.0
-
-        # Calmar
-        calmar = abs(cagr / max_drawdown) if max_drawdown > 1e-10 else 0.0
-
-        # Turnover (avg absolute daily return)
-        turnover = float(np.mean(np.abs(rets)))
-
-        # Win rate
-        win_rate = float(np.sum(rets > 0) / n) if n > 0 else 0.0
-
-        return {
-            "cagr": round(cagr, 4),
-            "sharpe": round(sharpe, 4),
-            "max_drawdown": round(max_drawdown, 4),
-            "calmar": round(calmar, 4),
-            "turnover": round(turnover, 4),
-            "win_rate": round(win_rate, 4),
-        }
+        prices_df = pd.DataFrame(prices_rows) if prices_rows else pd.DataFrame()
+        engine = BacktestEngine(prices=prices_df, weights=decisions)
+        return engine.compute()
 
     async def get_scorecard(self, run_id: str) -> dict[str, Any]:
         """Compute backtest scorecard metrics from decisions and prices."""
         logger.info("backtest.scorecard.start", extra={"run_id": run_id})
         db = await _get_db()
         await self._get_run(db, run_id)
-        decisions = await self._get_decisions_for_run(db, run_id)
-        returns = await self._compute_returns_from_decisions(db, decisions)
-        metrics = self._compute_metrics(returns)
-        return {"run_id": run_id, **metrics}
+        result = await self._run_engine(db, run_id)
+        return {"run_id": run_id, **result["headline"]}
 
     async def _compute_returns_from_decisions(
         self, db, decisions: list[dict[str, Any]]
     ) -> list[float]:
-        """Build daily return series from decisions and price data."""
-        import numpy as np
+        """Build daily return series from decisions and price data.
 
-        if not decisions:
-            return []
+        Delegates to BacktestEngine for computation.
+        """
+        import pandas as pd
 
-        # Group by day
-        by_day: dict[str, list[dict]] = {}
-        for d in decisions:
-            day = str(d.get("created_at_day", ""))[:10]
-            if day:
-                by_day.setdefault(day, []).append(d)
+        from midas.backtest.engine import BacktestEngine
 
-        if not by_day:
-            return []
-
-        sorted_days = sorted(by_day.keys())
-        if len(sorted_days) < 2:
-            return []
-
-        # Collect unique tickers
-        all_tickers: set[str] = set()
-        for d in decisions:
-            for t in str(d.get("instruments", "")).split(","):
-                t = t.strip()
-                if t:
-                    all_tickers.add(t)
-
-        if not all_tickers:
-            return []
-
-        # Fetch prices
-        price_map: dict[str, list[tuple[str, float]]] = {}
+        prices_rows = []
         try:
-            all_prices = await db.express.list("prices")
-            for p in all_prices:
-                ticker = p.get("ticker", "")
-                if ticker in all_tickers:
-                    day = str(p.get("period_end", ""))[:10]
-                    close = float(p.get("close", 0) or 0)
-                    if day and close > 0:
-                        price_map.setdefault(ticker, []).append((day, close))
+            prices_rows = await db.express.list("prices")
+            if isinstance(prices_rows, dict):
+                prices_rows = [prices_rows]
         except Exception:
-            return []
+            pass
 
-        for ticker in price_map:
-            price_map[ticker].sort(key=lambda x: x[0])
-
-        # Build daily returns
-        daily_returns: list[float] = []
-        prev_value = 1.0
-
-        for i, day in enumerate(sorted_days):
-            positions: dict[str, float] = {}
-            for d in by_day[day]:
-                action = str(d.get("action", "")).lower()
-                confidence = max(float(d.get("confidence") or 0.1), 0.05)
-                tickers = [t.strip() for t in str(d.get("instruments", "")).split(",") if t.strip()]
-                per_ticker_weight = confidence / len(tickers) if tickers else confidence
-                for ticker in tickers:
-                    if action == "buy":
-                        positions[ticker] = positions.get(ticker, 0) + per_ticker_weight
-                    elif action == "sell":
-                        positions[ticker] = positions.get(ticker, 0) - per_ticker_weight
-
-            current_value = prev_value
-            for ticker, weight in positions.items():
-                prices = price_map.get(ticker, [])
-                if len(prices) > i:
-                    idx = min(i, len(prices) - 1)
-                    curr_p = prices[idx][1]
-                    prev_p = prices[max(0, idx - 1)][1] if idx > 0 else curr_p
-                    if prev_p > 0:
-                        ret = (curr_p - prev_p) / prev_p
-                        current_value += weight * ret * prev_value
-
-            daily_ret = (current_value - prev_value) / prev_value if prev_value > 0 else 0.0
-            daily_returns.append(daily_ret)
-            prev_value = current_value
-
-        return daily_returns
+        prices_df = pd.DataFrame(prices_rows) if prices_rows else pd.DataFrame()
+        engine = BacktestEngine(prices=prices_df, weights=decisions)
+        result = engine.compute()
+        return result["daily_returns"]
 
     # z_scale band thresholds from latent_state — maps posterior width
     # proxy to attention regimes used throughout Midas.

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -501,10 +501,6 @@ class YahooFinanceAdapter(BaseAdapter):
             row_date_str = (
                 row_idx.strftime("%Y-%m-%d") if hasattr(row_idx, "strftime") else str(row_idx)
             )
-            try:
-                effective = date.fromisoformat(row_date_str)
-            except ValueError:
-                effective = now.date()
 
             # yfinance actions DataFrame has 'Dividends' and 'Stock Splits' columns
             div_val = row_data.get("Dividends", 0)
@@ -516,15 +512,14 @@ class YahooFinanceAdapter(BaseAdapter):
 
             if has_div:
                 action_row: dict[str, Any] = {
-                    "instrument": ticker,
+                    "ticker": ticker,
                     "period_end": row_date_str,
                     "filed_at": now.isoformat(),
-                    "restated_at": None,
+                    "restated_at": "",
                     "source_vintage": f"yahoo:dividend:{row_date_str}",
                     "action_type": "DIVIDEND",
-                    "effective_date": effective.isoformat(),
-                    "ratio_or_amount": float(div_val),
-                    "ticker_after": None,
+                    "value": float(div_val),
+                    "description": f"Dividend {float(div_val)}",
                 }
                 try:
                     await db.express.create("corporate_actions", action_row)
@@ -539,15 +534,14 @@ class YahooFinanceAdapter(BaseAdapter):
 
             if has_split:
                 action_row = {
-                    "instrument": ticker,
+                    "ticker": ticker,
                     "period_end": row_date_str,
                     "filed_at": now.isoformat(),
-                    "restated_at": None,
+                    "restated_at": "",
                     "source_vintage": f"yahoo:split:{row_date_str}",
                     "action_type": "SPLIT",
-                    "effective_date": effective.isoformat(),
-                    "ratio_or_amount": float(split_val),
-                    "ticker_after": None,
+                    "value": float(split_val),
+                    "description": f"Stock split {float(split_val)}:1",
                 }
                 try:
                     await db.express.create("corporate_actions", action_row)

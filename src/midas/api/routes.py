@@ -53,6 +53,30 @@ async def _get_db():
         raise HTTPException(status_code=503, detail="Database unavailable")
 
 
+async def _fetch_decisions(db) -> list[dict[str, Any]]:
+    """Fetch shadow decisions from fabric for backtest."""
+    try:
+        rows = await db.express.list("shadow_decisions")
+        return [rows] if isinstance(rows, dict) else list(rows)
+    except Exception:
+        return []
+
+
+async def _fetch_prices_df(db):
+    """Fetch prices from fabric as a DataFrame for BacktestEngine."""
+    import pandas as pd
+
+    try:
+        rows = await db.express.list("prices")
+        if not rows:
+            return pd.DataFrame()
+        if isinstance(rows, dict):
+            rows = [rows]
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
 class HealthRouter:
     """Health check and system status endpoints."""
 
@@ -1016,7 +1040,7 @@ class BacktestRouter:
             return {"run_id": "local", "status": "queued"}
 
     async def get_results(self, run_id: str) -> dict[str, Any]:
-        """Get backtest results with regime breakdown and consistency data."""
+        """Get backtest results computed via BacktestEngine."""
         logger.info("backtest.results.start", extra={"run_id": run_id})
         try:
             db = await _get_db()
@@ -1026,58 +1050,42 @@ class BacktestRouter:
                     "status": "pending",
                     "metrics": {},
                     "regime_breakdown": [],
-                    "sub_horizons": [],
+                    "sub_horizons": {},
                 }
-            # Look up by integer id; if run_id is not a valid integer, use a default
+
             try:
                 id_value = int(run_id)
             except ValueError:
-                id_value = 1  # default to id=1 for seeded test data
+                id_value = 1
+
             row = await db.express.read("shadow_decisions", id_value)
             if not row:
-                # Fallback: return result based on run_id parameter alone
                 return {
                     "run_id": run_id,
                     "status": "pending",
                     "metrics": {},
                     "regime_breakdown": [],
-                    "sub_horizons": [],
+                    "sub_horizons": {},
                 }
 
-            # Compute regime breakdown and consistency via BacktestDetailRouter.
-            # Import here to avoid circular import at module level.
-            from midas.api.routes_extended import BacktestDetailRouter
+            # Fetch decisions and prices, then run BacktestEngine.
+            from midas.backtest.engine import BacktestEngine
 
-            detail_router = BacktestDetailRouter()
-            try:
-                regime_result = await detail_router.get_regime_breakdown(run_id)
-                regime_breakdown = regime_result.get("regimes", [])
-            except Exception:
-                regime_breakdown = []
+            decisions = await _fetch_decisions(db)
+            prices_df = await _fetch_prices_df(db)
 
-            try:
-                consistency_result = await detail_router.get_consistency(run_id)
-                monthly = consistency_result.get("monthly", {})
-                quarterly = consistency_result.get("quarterly", {})
-                sub_horizons = [
-                    {
-                        "label": "Monthly",
-                        "return": monthly.get("positive_fraction", 0.0) or None,
-                        "periods": monthly.get("total_periods", 0),
-                    },
-                    {
-                        "label": "Quarterly",
-                        "return": quarterly.get("positive_fraction", 0.0) or None,
-                        "periods": quarterly.get("total_periods", 0),
-                    },
-                ]
-            except Exception:
-                sub_horizons = []
+            engine = BacktestEngine(prices=prices_df, weights=decisions)
+            result = engine.compute()
+
+            regime_breakdown = result["regime_breakdown"]
+            sub_horizons = result["sub_horizons"]
 
             return {
                 "run_id": run_id,
                 "status": "completed" if row.get("rationale") else "pending",
-                "metrics": {},
+                "metrics": result["headline"],
+                "equity_curve": result["equity_curve"],
+                "daily_returns": result["daily_returns"],
                 "regime_breakdown": regime_breakdown,
                 "sub_horizons": sub_horizons,
             }
@@ -1090,7 +1098,7 @@ class BacktestRouter:
                 "status": "pending",
                 "metrics": {},
                 "regime_breakdown": [],
-                "sub_horizons": [],
+                "sub_horizons": {},
             }
 
     async def list_scenarios(self) -> dict[str, Any]:
