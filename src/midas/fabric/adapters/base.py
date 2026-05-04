@@ -178,7 +178,12 @@ class BaseAdapter(ABC):
         Subclasses can override to extract ``Retry-After`` or similar
         headers and adjust ``_min_call_interval_s`` dynamically.
         """
-        retry_after = headers.get("Retry-After") or headers.get("X-RateLimit-Reset")
+        retry_after = (
+            headers.get("Retry-After")
+            or headers.get("retry-after")
+            or headers.get("X-RateLimit-Reset")
+            or headers.get("x-ratelimit-reset")
+        )
         if retry_after is not None:
             try:
                 self._min_call_interval_s = max(float(retry_after), self._min_call_interval_s)

@@ -2,6 +2,18 @@ import type { Band } from "@/stores/regime-store";
 
 export type { Band };
 
+export type OnboardingStep =
+  | "connect"
+  | "risk"
+  | "universe"
+  | "activate"
+  | "done";
+
+export interface OnboardingStatus {
+  activated: boolean;
+  step: OnboardingStep;
+}
+
 export interface PulseResponse {
   nav: number;
   nav_change_pct: number;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/api-client";
+import { useSetUniverseConstraints } from "@/lib/queries/useOnboarding";
 
 interface StepPaperTradingProps {
   onComplete: () => void;
@@ -12,26 +12,23 @@ export function StepPaperTrading({
   onComplete,
   onError,
 }: StepPaperTradingProps) {
-  const [loading, setLoading] = useState(false);
   const [excludeTickers, setExcludeTickers] = useState("");
+  const mutation = useSetUniverseConstraints();
 
-  async function handleSubmit() {
-    setLoading(true);
+  function handleSubmit() {
     onError("");
-    try {
-      const exclusions = excludeTickers
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      await api.post("/onboarding/universe-constraints", {
-        universe_exclusions: exclusions,
-      });
-      onComplete();
-    } catch (e: unknown) {
-      onError(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setLoading(false);
-    }
+    const exclusions = excludeTickers
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    mutation.mutate(
+      { universe_exclusions: exclusions },
+      {
+        onSuccess: () => onComplete(),
+        onError: (err: Error) =>
+          onError(err instanceof Error ? err.message : "Save failed"),
+      },
+    );
   }
 
   return (
@@ -58,7 +55,7 @@ export function StepPaperTrading({
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
           placeholder="e.g., TSLA, COIN, MSTR (comma-separated)"
           className="w-full rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-gold)]"
-          disabled={loading}
+          disabled={mutation.isPending}
         />
         <p className="text-xs text-[var(--text-muted)]">
           Separate multiple tickers with commas. This step is optional.
@@ -67,10 +64,10 @@ export function StepPaperTrading({
 
       <button
         onClick={handleSubmit}
-        disabled={loading}
-        className="w-full rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-primary)] px-4 py-2.5 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+        disabled={mutation.isPending}
+        className="w-full rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-primary)] px-4 py-3 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity min-h-12"
       >
-        {loading ? "Saving..." : "Save Constraints"}
+        {mutation.isPending ? "Saving..." : "Save Constraints"}
       </button>
     </div>
   );

@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { api } from "@/lib/api-client";
+import { useActivate } from "@/lib/queries/useOnboarding";
 
 interface StepReviewProps {
   onComplete: () => void;
@@ -10,21 +9,18 @@ interface StepReviewProps {
 }
 
 export function StepReview({ onComplete, onDone, onError }: StepReviewProps) {
-  const [loading, setLoading] = useState(false);
+  const mutation = useActivate();
 
-  async function handleActivate() {
-    setLoading(true);
+  function handleActivate() {
     onError("");
-    try {
-      await api.post("/onboarding/activate");
-      onComplete();
-      // Short delay before redirecting to dashboard
-      setTimeout(onDone, 1500);
-    } catch (e: unknown) {
-      onError(e instanceof Error ? e.message : "Activation failed");
-    } finally {
-      setLoading(false);
-    }
+    mutation.mutate(undefined, {
+      onSuccess: () => {
+        onComplete();
+        setTimeout(onDone, 1500);
+      },
+      onError: (err: Error) =>
+        onError(err instanceof Error ? err.message : "Activation failed"),
+    });
   }
 
   return (
@@ -72,10 +68,10 @@ export function StepReview({ onComplete, onDone, onError }: StepReviewProps) {
 
       <button
         onClick={handleActivate}
-        disabled={loading}
-        className="w-full rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-primary)] px-4 py-2.5 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+        disabled={mutation.isPending}
+        className="w-full rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-primary)] px-4 py-3 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity min-h-12"
       >
-        {loading ? "Activating..." : "Activate Paper Trading"}
+        {mutation.isPending ? "Activating..." : "Activate Paper Trading"}
       </button>
     </div>
   );

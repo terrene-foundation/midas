@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/api-client";
+import { useSetRiskProfile } from "@/lib/queries/useOnboarding";
 
 interface StepRiskProfileProps {
   onComplete: () => void;
@@ -9,28 +9,27 @@ interface StepRiskProfileProps {
 }
 
 export function StepRiskProfile({ onComplete, onError }: StepRiskProfileProps) {
-  const [loading, setLoading] = useState(false);
   const [volLow, setVolLow] = useState("0.10");
   const [volHigh, setVolHigh] = useState("0.20");
   const [ddCeiling, setDdCeiling] = useState("0.10");
   const [concCap, setConcCap] = useState("0.10");
+  const mutation = useSetRiskProfile();
 
-  async function handleSubmit() {
-    setLoading(true);
+  function handleSubmit() {
     onError("");
-    try {
-      await api.post("/onboarding/risk-profile", {
+    mutation.mutate(
+      {
         vol_target_low: parseFloat(volLow),
         vol_target_high: parseFloat(volHigh),
         drawdown_ceiling: parseFloat(ddCeiling),
         concentration_cap: parseFloat(concCap),
-      });
-      onComplete();
-    } catch (e: unknown) {
-      onError(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setLoading(false);
-    }
+      },
+      {
+        onSuccess: () => onComplete(),
+        onError: (err: Error) =>
+          onError(err instanceof Error ? err.message : "Save failed"),
+      },
+    );
   }
 
   return (
@@ -58,7 +57,7 @@ export function StepRiskProfile({ onComplete, onError }: StepRiskProfileProps) {
             value={volLow}
             onChange={(e) => setVolLow(e.target.value)}
             className="w-full rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-gold)]"
-            disabled={loading}
+            disabled={mutation.isPending}
           />
           <p className="text-xs text-[var(--text-muted)]">
             Minimum volatility (0.01 - 0.99)
@@ -77,7 +76,7 @@ export function StepRiskProfile({ onComplete, onError }: StepRiskProfileProps) {
             value={volHigh}
             onChange={(e) => setVolHigh(e.target.value)}
             className="w-full rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-gold)]"
-            disabled={loading}
+            disabled={mutation.isPending}
           />
           <p className="text-xs text-[var(--text-muted)]">
             Maximum volatility (0.02 - 1.0)
@@ -96,7 +95,7 @@ export function StepRiskProfile({ onComplete, onError }: StepRiskProfileProps) {
             value={ddCeiling}
             onChange={(e) => setDdCeiling(e.target.value)}
             className="w-full rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-gold)]"
-            disabled={loading}
+            disabled={mutation.isPending}
           />
           <p className="text-xs text-[var(--text-muted)]">5% - 30%</p>
         </div>
@@ -113,7 +112,7 @@ export function StepRiskProfile({ onComplete, onError }: StepRiskProfileProps) {
             value={concCap}
             onChange={(e) => setConcCap(e.target.value)}
             className="w-full rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-gold)]"
-            disabled={loading}
+            disabled={mutation.isPending}
           />
           <p className="text-xs text-[var(--text-muted)]">
             1% - 50% per position
@@ -123,10 +122,10 @@ export function StepRiskProfile({ onComplete, onError }: StepRiskProfileProps) {
 
       <button
         onClick={handleSubmit}
-        disabled={loading}
-        className="w-full rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-primary)] px-4 py-2.5 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+        disabled={mutation.isPending}
+        className="w-full rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-primary)] px-4 py-3 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity min-h-12"
       >
-        {loading ? "Saving..." : "Save Risk Profile"}
+        {mutation.isPending ? "Saving..." : "Save Risk Profile"}
       </button>
     </div>
   );

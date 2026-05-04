@@ -1,35 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api-client";
-
-interface OnboardingStatus {
-  activated: boolean;
-  step: string;
-}
+import { useOnboardingStatus } from "@/lib/queries/useOnboarding";
+import { Skeleton } from "@/elements/LoadingSkeleton";
 
 export function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [checked, setChecked] = useState(false);
+  const { data, isPending, isError } = useOnboardingStatus();
 
   useEffect(() => {
-    api
-      .get<OnboardingStatus>("/onboarding/status")
-      .then((status) => {
-        if (!status.activated) {
-          router.replace("/onboarding");
-        } else {
-          setChecked(true);
-        }
-      })
-      .catch(() => {
-        // Auth error or network failure — let the page render, auth middleware will handle
-        setChecked(true);
-      });
-  }, [router]);
+    if (isPending || isError) return;
+    if (data && !data.activated) {
+      router.replace("/onboarding");
+    }
+  }, [data, isPending, isError, router]);
 
-  if (!checked) {
+  if (isPending) {
+    return (
+      <div className="space-y-4 p-4">
+        <Skeleton className="h-3 w-20" />
+        <Skeleton variant="card" />
+        <Skeleton variant="card" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    // Auth error or network failure — let the page render, auth middleware will handle
+    return <>{children}</>;
+  }
+
+  if (data && !data.activated) {
+    // Redirecting to onboarding — show nothing
     return null;
   }
 

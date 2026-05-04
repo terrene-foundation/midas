@@ -2,23 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api-client";
+import { useOnboardingStatus } from "@/lib/queries/useOnboarding";
+import type { OnboardingStep } from "@/lib/types";
 import { StepBrokerage } from "./StepBrokerage";
 import { StepRiskProfile } from "./StepRiskProfile";
 import { StepPaperTrading } from "./StepPaperTrading";
 import { StepReview } from "./StepReview";
 import { cn } from "@/elements/ui/utils";
-
-export type OnboardingStep =
-  | "connect"
-  | "risk"
-  | "universe"
-  | "activate"
-  | "done";
-
-interface OnboardingWizardProps {
-  initialStep?: OnboardingStep;
-}
+import { Skeleton } from "@/elements/LoadingSkeleton";
 
 const STEPS: { key: OnboardingStep; label: string; n: number }[] = [
   { key: "connect", label: "Connect Brokerage", n: 1 },
@@ -27,12 +18,25 @@ const STEPS: { key: OnboardingStep; label: string; n: number }[] = [
   { key: "activate", label: "Activate", n: 4 },
 ];
 
-export function OnboardingWizard({
-  initialStep = "connect",
-}: OnboardingWizardProps) {
+export function OnboardingWizard() {
   const router = useRouter();
+  const { data: status, isPending } = useOnboardingStatus();
+
+  const initialStep: OnboardingStep =
+    status && status.step !== "done" ? status.step : "connect";
+
   const [step, setStep] = useState<OnboardingStep>(initialStep);
   const [error, setError] = useState("");
+
+  // Sync step from server state when it arrives (resume on refresh)
+  if (
+    status &&
+    step === "connect" &&
+    status.step !== "connect" &&
+    status.step !== "done"
+  ) {
+    setStep(status.step);
+  }
 
   const stepIndex = STEPS.findIndex((s) => s.key === step);
   const progress =
@@ -53,6 +57,21 @@ export function OnboardingWizard({
 
   function handleDone() {
     router.push("/pulse");
+  }
+
+  if (isPending) {
+    return (
+      <div className="max-w-2xl mx-auto p-6 space-y-6">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton variant="rect" className="h-2 w-full" />
+        <Skeleton variant="card" className="h-64" />
+      </div>
+    );
+  }
+
+  if (status?.activated) {
+    router.replace("/pulse");
+    return null;
   }
 
   return (

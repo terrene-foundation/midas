@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/api-client";
+import { useConnectBrokerage } from "@/lib/queries/useOnboarding";
 
 interface StepBrokerageProps {
   onComplete: () => void;
@@ -10,25 +10,24 @@ interface StepBrokerageProps {
 
 export function StepBrokerage({ onComplete, onError }: StepBrokerageProps) {
   const [connectionRef, setConnectionRef] = useState("");
-  const [loading, setLoading] = useState(false);
+  const mutation = useConnectBrokerage();
 
-  async function handleSubmit() {
-    if (!connectionRef.trim()) {
+  const isFormValid = connectionRef.trim().length > 0;
+
+  function handleSubmit() {
+    if (!isFormValid) {
       onError("Connection reference is required");
       return;
     }
-    setLoading(true);
     onError("");
-    try {
-      await api.post("/onboarding/connect-brokerage", {
-        connection_ref: connectionRef.trim(),
-      });
-      onComplete();
-    } catch (e: unknown) {
-      onError(e instanceof Error ? e.message : "Connection failed");
-    } finally {
-      setLoading(false);
-    }
+    mutation.mutate(
+      { connection_ref: connectionRef.trim() },
+      {
+        onSuccess: () => onComplete(),
+        onError: (err: Error) =>
+          onError(err instanceof Error ? err.message : "Connection failed"),
+      },
+    );
   }
 
   return (
@@ -55,7 +54,7 @@ export function StepBrokerage({ onComplete, onError }: StepBrokerageProps) {
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
           placeholder="e.g., ibkr-account-XXXXX"
           className="w-full rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-gold)]"
-          disabled={loading}
+          disabled={mutation.isPending}
         />
         <p className="mt-1.5 text-xs text-[var(--text-muted)]">
           Enter your brokerage account ID or API reference from your broker
@@ -65,10 +64,10 @@ export function StepBrokerage({ onComplete, onError }: StepBrokerageProps) {
 
       <button
         onClick={handleSubmit}
-        disabled={!connectionRef.trim() || loading}
-        className="w-full rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-primary)] px-4 py-2.5 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+        disabled={!isFormValid || mutation.isPending}
+        className="w-full rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-primary)] px-4 py-3 text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity min-h-12"
       >
-        {loading ? "Connecting..." : "Connect Brokerage"}
+        {mutation.isPending ? "Connecting..." : "Connect Brokerage"}
       </button>
     </div>
   );
