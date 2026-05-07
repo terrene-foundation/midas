@@ -15,6 +15,11 @@ import { Skeleton } from "@/elements/LoadingSkeleton";
 import { useState, useEffect, useRef } from "react";
 import { PaperToLiveFlow } from "@/elements/safety/PaperToLiveFlow";
 import { AttentionReport } from "@/elements/attention/AttentionReport";
+import { NotificationPreferences } from "@/elements/settings/NotificationPreferences";
+import {
+  NotificationPermissionRequest,
+  WeeklyAttentionSummary,
+} from "@/elements/notifications";
 import { cn } from "@/elements/ui/utils";
 
 export default function SettingsPage() {
@@ -164,6 +169,22 @@ export default function SettingsPage() {
         </h2>
         <AttentionReport />
       </section>
+
+      <section className="rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 space-y-3">
+        <h2 className="text-sm font-medium text-[var(--accent-gold)]">
+          Notification Preferences
+        </h2>
+        <NotificationPreferences />
+      </section>
+
+      <section className="rounded-[var(--radius)] border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 space-y-3">
+        <h2 className="text-sm font-medium text-[var(--accent-gold)]">
+          Weekly Attention Summary
+        </h2>
+        <WeeklyAttentionSummary />
+      </section>
+
+      <NotificationPermissionRequest />
     </div>
   );
 }

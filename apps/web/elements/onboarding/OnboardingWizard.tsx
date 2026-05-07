@@ -8,6 +8,7 @@ import { StepBrokerage } from "./StepBrokerage";
 import { StepRiskProfile } from "./StepRiskProfile";
 import { StepPaperTrading } from "./StepPaperTrading";
 import { StepReview } from "./StepReview";
+import { NotificationPermissionRequest } from "@/elements/notifications";
 import { cn } from "@/elements/ui/utils";
 import { Skeleton } from "@/elements/LoadingSkeleton";
 
@@ -141,6 +142,7 @@ export function OnboardingWizard() {
             Your investment assistant is now active in paper trading mode. Visit
             the Pulse dashboard to monitor its decisions.
           </p>
+          <NotificationPermissionRequest className="mt-4" />
           <button
             onClick={handleDone}
             className="inline-block rounded-[var(--radius)] bg-[var(--accent-gold)] text-[var(--bg-primary)] px-6 py-2 text-sm font-medium hover:opacity-90 transition-opacity"

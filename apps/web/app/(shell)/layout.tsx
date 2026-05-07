@@ -4,6 +4,7 @@ import { OODBanner } from "@/elements/safety/OODBanner";
 import { AttentionBudgetGauge } from "@/elements/attention/AttentionBudgetGauge";
 import { OnboardingGuard } from "@/elements/onboarding/OnboardingGuard";
 import { NotificationCenter } from "@/elements/notifications/NotificationCenter";
+import { RegimeChangeToast } from "@/elements/notifications/RegimeChangeToast";
 
 export default function ShellLayout({
   children,
@@ -28,6 +29,7 @@ export default function ShellLayout({
         </div>
         <DebateOverlay />
       </div>
+      <RegimeChangeToast />
     </ViewportGate>
   );
 }

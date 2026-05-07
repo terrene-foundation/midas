@@ -413,6 +413,16 @@ class NotificationRouter:
                 status_code=400, detail="daily_attention_ceiling_minutes must be in [5, 120]"
             )
 
+        # Validate tier band keys against known bands (ui-backend-defense.md allowlist)
+        ALLOWED_BANDS = {"calm", "elevated", "urgent", "crisis"}
+        tiers = body.get("tiers", self.DEFAULT_TIERS)
+        for key in tiers:
+            if key not in ALLOWED_BANDS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown band in tiers: {key!r}. Allowed: {sorted(ALLOWED_BANDS)}",
+                )
+
         # Persist to DB
         try:
             db = await _get_db()

@@ -385,3 +385,29 @@ export interface BriefVersion {
   status: string;
   created_at: string;
 }
+
+// Notification types (specs/09 S7)
+export type NotificationTier =
+  | "silent_in_app"
+  | "standard_push"
+  | "prominent_push_haptic"
+  | "emergency";
+
+export interface NotificationPreferences {
+  tiers: Record<string, NotificationTier>;
+  quiet_hours: {
+    start: string;
+    end: string;
+    timezone: string;
+  };
+  daily_attention_ceiling_minutes: number;
+}
+
+export interface AttentionReport {
+  decision_seconds_this_week: number;
+  decision_count: number;
+  average_time_to_decide: number;
+  notification_volume_by_tier: Record<string, number>;
+  fatigue_signal_present: boolean;
+  override_rate: number;
+}

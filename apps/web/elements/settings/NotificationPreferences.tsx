@@ -1,22 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useNotificationPreferences,
+  useUpdateNotificationPreferences,
+  NOTIF_KEY,
+} from "@/lib/queries/useNotifications";
+import { Skeleton } from "@/elements/LoadingSkeleton";
 import { cn } from "@/elements/ui/utils";
-
-interface NotificationPreferencesProps {
-  initialPreferences?: {
-    daily_attention_ceiling?: number;
-    band_tiers?: Record<string, boolean>;
-    quiet_hours_start?: string;
-    quiet_hours_end?: string;
-  };
-  onSave?: (prefs: {
-    daily_attention_ceiling: number;
-    band_tiers: Record<string, boolean>;
-    quiet_hours_start: string;
-    quiet_hours_end: string;
-  }) => void;
-}
+import type { NotificationTier } from "@/lib/types";
 
 const BANDS = [
   { id: "calm", label: "Calm", color: "var(--regime-calm)" },
@@ -25,46 +18,101 @@ const BANDS = [
   { id: "crisis", label: "Crisis", color: "var(--regime-crisis)" },
 ];
 
-export function NotificationPreferences({
-  initialPreferences = {},
-  onSave,
-}: NotificationPreferencesProps) {
-  const [dailyCeiling, setDailyCeiling] = useState(
-    initialPreferences.daily_attention_ceiling ?? 480,
-  );
-  const [bandTiers, setBandTiers] = useState<Record<string, boolean>>(
-    initialPreferences.band_tiers ?? {
-      calm: false,
-      elevated: true,
-      urgent: true,
-      crisis: true,
-    },
-  );
-  const [quietStart, setQuietStart] = useState(
-    initialPreferences.quiet_hours_start ?? "22:00",
-  );
-  const [quietEnd, setQuietEnd] = useState(
-    initialPreferences.quiet_hours_end ?? "07:00",
-  );
+// Map boolean toggles (per-band notification enabled/disabled) to tier strings
+const TIER_ENABLED: NotificationTier = "standard_push";
+const TIER_DISABLED: NotificationTier = "silent_in_app";
+
+function bandTiersToEnabled(
+  tiers: Record<string, NotificationTier>,
+): Record<string, boolean> {
+  return {
+    calm: tiers.calm !== "silent_in_app",
+    elevated: tiers.elevated !== "silent_in_app",
+    urgent: tiers.urgent !== "silent_in_app",
+    crisis: tiers.crisis !== "silent_in_app",
+  };
+}
+
+function enabledToBandTiers(
+  enabled: Record<string, boolean>,
+): Record<string, NotificationTier> {
+  return {
+    calm: enabled.calm ? TIER_ENABLED : TIER_DISABLED,
+    elevated: enabled.elevated ? TIER_ENABLED : TIER_DISABLED,
+    urgent: enabled.urgent ? TIER_ENABLED : TIER_DISABLED,
+    crisis: enabled.crisis ? TIER_ENABLED : TIER_DISABLED,
+  };
+}
+
+export function NotificationPreferences({ className }: { className?: string }) {
+  const qc = useQueryClient();
+  const { data: prefs, isPending } = useNotificationPreferences();
+  const update = useUpdateNotificationPreferences();
+
+  const [dailyCeiling, setDailyCeiling] = useState(30);
+  const [bandTiers, setBandTiers] = useState<Record<string, boolean>>({
+    calm: false,
+    elevated: true,
+    urgent: true,
+    crisis: true,
+  });
+  const [quietStart, setQuietStart] = useState("22:00");
+  const [quietEnd, setQuietEnd] = useState("07:00");
   const [saved, setSaved] = useState(false);
+
+  // Sync local state when server data arrives
+  if (!isPending && prefs) {
+    const enabled = bandTiersToEnabled(prefs.tiers);
+    if (
+      dailyCeiling !== prefs.daily_attention_ceiling_minutes ||
+      quietStart !== prefs.quiet_hours.start ||
+      quietEnd !== prefs.quiet_hours.end ||
+      JSON.stringify(enabled) !== JSON.stringify(bandTiers)
+    ) {
+      setDailyCeiling(prefs.daily_attention_ceiling_minutes);
+      setQuietStart(prefs.quiet_hours.start);
+      setQuietEnd(prefs.quiet_hours.end);
+      setBandTiers(enabled);
+    }
+  }
 
   const handleToggleBand = (bandId: string) => {
     setBandTiers((prev) => ({ ...prev, [bandId]: !prev[bandId] }));
   };
 
   const handleSave = () => {
-    onSave?.({
-      daily_attention_ceiling: dailyCeiling,
-      band_tiers: bandTiers,
-      quiet_hours_start: quietStart,
-      quiet_hours_end: quietEnd,
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    update.mutate(
+      {
+        tiers: enabledToBandTiers(bandTiers),
+        quiet_hours: {
+          start: quietStart,
+          end: quietEnd,
+          timezone: "Asia/Singapore",
+        },
+        daily_attention_ceiling_minutes: dailyCeiling,
+      },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: NOTIF_KEY });
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        },
+      },
+    );
   };
 
+  if (isPending) {
+    return (
+      <div className={cn("space-y-6", className)}>
+        <Skeleton variant="rect" className="h-24" />
+        <Skeleton variant="rect" className="h-32" />
+        <Skeleton variant="rect" className="h-16" />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
+    <div className={cn("space-y-6", className)}>
       <div className="space-y-3">
         <div>
           <div className="flex justify-between mb-2">
@@ -77,9 +125,9 @@ export function NotificationPreferences({
           </div>
           <input
             type="range"
-            min={60}
-            max={960}
-            step={30}
+            min={5}
+            max={120}
+            step={5}
             value={dailyCeiling}
             onChange={(e) => setDailyCeiling(Number(e.target.value))}
             className="w-full h-2 rounded-full appearance-none bg-[var(--bg-elevated)] cursor-pointer
@@ -91,8 +139,8 @@ export function NotificationPreferences({
               [&::-webkit-slider-thumb]:cursor-pointer"
           />
           <div className="flex justify-between text-xs text-[var(--text-muted)] mt-1">
-            <span>1h</span>
-            <span>16h</span>
+            <span>5m</span>
+            <span>2h</span>
           </div>
         </div>
 
@@ -177,11 +225,12 @@ export function NotificationPreferences({
 
       <button
         onClick={handleSave}
+        disabled={update.isPending}
         className={cn(
-          "px-4 py-2 rounded text-sm font-medium transition-colors",
+          "px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50",
           saved
             ? "bg-[var(--gain-green)] text-white"
-            : "bg-[var(--accent-gold)] text-[var(--bg-base)]",
+            : "bg-[var(--accent-gold)] text-[var(--bg-base)] hover:brightness-110",
         )}
       >
         {saved ? "Saved!" : "Save Preferences"}
